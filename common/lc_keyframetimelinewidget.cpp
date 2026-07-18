@@ -70,7 +70,20 @@ void lcKeyframeTimelineWidget::paintEvent(QPaintEvent*)
 		return;
 	}
 
-	// Segment fills and frame ticks
+	// 10-frame interval ticks
+	for (int f = (mFrameStart / 10 + 1) * 10; f < mFrameEnd; f += 10)
+	{
+		const int x = TimeToX(f);
+		p.setPen(QColor(70, 70, 70));
+		p.drawLine(x, trackY - 5, x, trackY + 5);
+		QFont tf = p.font();
+		tf.setPointSize(6);
+		p.setFont(tf);
+		p.setPen(QColor(100, 100, 100));
+		p.drawText(x - 8, trackY + 7, 16, 10, Qt::AlignCenter, QString::number(f));
+	}
+
+	// Segment labels
 	for (size_t i = 0; i < mKeyframes->size() - 1; i++)
 	{
 		const lcKeyframePoint& kf = (*mKeyframes)[i];
@@ -78,7 +91,6 @@ void lcKeyframeTimelineWidget::paintEvent(QPaintEvent*)
 		const int x1 = TimeToX(kf.Time);
 		const int x2 = TimeToX(next.Time);
 
-		// Easing label centered on segment
 		const char* easingNames[] = { "Lin", "In", "Out", "InOut" };
 		QColor segmentColors[] = { QColor(100, 100, 100), QColor(60, 120, 200), QColor(200, 120, 60), QColor(100, 180, 100) };
 		const int ei = static_cast<int>(kf.SegmentEasing);
@@ -86,14 +98,6 @@ void lcKeyframeTimelineWidget::paintEvent(QPaintEvent*)
 		{
 			p.setPen(segmentColors[ei]);
 			p.drawText((x1 + x2) / 2 - 12, 8, 24, 14, Qt::AlignCenter, easingNames[ei]);
-		}
-
-		// Frame ticks along segment
-		for (int f = kf.Time + 1; f < next.Time; f++)
-		{
-			const int x = TimeToX(f);
-			p.setPen(QColor(70, 70, 70));
-			p.drawLine(x, trackY - 3, x, trackY + 3);
 		}
 	}
 
@@ -134,10 +138,15 @@ void lcKeyframeTimelineWidget::paintEvent(QPaintEvent*)
 
 void lcKeyframeTimelineWidget::mousePressEvent(QMouseEvent* Event)
 {
-	if (!mKeyframes || mKeyframes->empty())
-		return;
-
 	const int mx = Event->x();
+
+	if (!mKeyframes || mKeyframes->empty())
+	{
+		mCurrentTime = qBound(mFrameStart, XToTime(mx), mFrameEnd);
+		emit CurrentTimeDragged(mCurrentTime);
+		update();
+		return;
+	}
 
 	// Check if clicking on a keyframe diamond
 	for (size_t i = 0; i < mKeyframes->size(); i++)
@@ -173,6 +182,7 @@ void lcKeyframeTimelineWidget::mousePressEvent(QMouseEvent* Event)
 	mSelectedIndex = -1;
 	mSelectedSegment = -1;
 	mCurrentTime = qBound(mFrameStart, XToTime(mx), mFrameEnd);
+	emit CurrentTimeDragged(mCurrentTime);
 	update();
 }
 
