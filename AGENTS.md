@@ -54,7 +54,7 @@ snapshot-based system instead:
 
 - `struct lcAnimateFrame` (`lc_animatewidget.h`): a captured frame = `QMap<lcPiece*, lcVector3>`
   positions + `QMap<lcPiece*, lcMatrix33>` rotations for every piece, plus camera
-  position/target/up (`HasCamera` flag). Keyed by raw `lcPiece*` pointer — **not**
+  position/target/up/projection (`HasCamera` flag). Keyed by raw `lcPiece*` pointer — **not**
   `lcPiece::GetID()`, which is the LDraw part filename and collides between e.g. left/right hands
   (both literally the part `3820.dat`).
 - `struct lcAnimateDocumentState`: one per `lcModel*` (`QMap<lcModel*, lcAnimateDocumentState>` in
@@ -101,7 +101,8 @@ All in `common/` unless noted.
 | Attach to Hand | `lc_animatewidget.cpp` (`AttachToHandClicked`) | Reuses `MinifigWizard`'s parsed `minifig.ini` hand-offset tables via a lazily-constructed static `MinifigWizard*`. Currently hardcoded to always use the right-hand offset table (documented `ponytail:` comment) |
 | Mirror Pose | `lc_animatewidget.cpp` (`MirrorPoseClicked`) | **Legs only** — copies the rotation matrix verbatim from one leg piece to its counterpart (matched by identical `mPieceInfo`). Deliberately does not support arms (usually different mirrored LDraw parts, direct matrix copy would be wrong) |
 | Alt+click select whole minifig | `lc_model.h/.cpp` (`SelectMinifigFamilyAction`), `lc_view.cpp` (`OnButtonDown`, Select case) | Uses `lcGroup::mMinifigFamily` (see below) |
-| Walk Cycle generator | `lc_animatewidget.cpp` (`WalkCycleClicked`) | Reuses `MinifigWizard::SetAngle`/`Calculate()` (the exact math the Wizard's angle sliders use) rather than re-deriving hip rotation formulas. See "Known risk area" |
+| Walk Cycle generator | `lc_animatewidget.cpp` (`WalkCycleClicked`) | Reuses `MinifigWizard::SetAngle`/`Calculate()` (the exact math the Wizard's angle sliders use) rather than re-deriving hip rotation formulas. Supports arm swing (Right Arm/Left Arm groups, opposite-phase), speed slider (1-10), stride angle, gait presets. See "Known risk area" |
+| Camera projection per frame | `lc_animatewidget.h/.cpp`, `camera.h` | `lcCameraProjection` saved in `lcAnimateFrame`/`lcKeyframePose`, restored by `lcPoseAnimateFrame`, persisted in `.animate.json` |
 | Minifig Wizard "Posable" checkbox | `lc_minifigdialog.h/.cpp/.ui` | On by default |
 | CI: rolling "continuous" release, macOS DMG | `.github/workflows/release.yml`, `.github/workflows/continuous.yml` | Pinned to `macos-14` — newer runner SDKs (26.5) break the Qt 6.8.3/5.15.2 build (`AGL not found`, `qyieldcpu.h` implicit-decl) |
 | Rebrand LeoCAD → StopMotionDigital | ~15 files (`Info.plist`, `lc_aboutdialog.*`, `lc_application.cpp`, etc.) | Left alone deliberately: `.lcd` binary magic bytes, internal function names like `lcVector3LDrawToLeoCAD`, upstream Help-menu links |
@@ -248,6 +249,18 @@ not re-ask):
 - Easing is per-segment, settable when a keyframe is selected (easing combo reflects the segment *from* that keyframe *to* the next). No visual curve editing.
 - No keyframe at time 0 / at the end of the frame range — the user needs to explicitly add keyframes.
 - Rotation interpolation uses axis-angle, which is correct for single-axis (minifig hip/shoulder swings). For arbitrary multi-axis rotations, full quaternion SLERP would be more correct — the `lcQuaternionSlerp` function needs to be written; `lcMatrix33ToQuaternion` and `lcQuaternionToMatrix33` already exist in `lc_math.h` from this session.
+- Camera projection (`lcCameraProjection`) is now saved/restored per frame in `lcAnimateFrame`, `lcKeyframePose`, and `.animate.json`.
+- **Keyframe placement fix**: `AddKeyframeClicked` was using `State.CurrentFrameIndex` instead of `mTimelineWidget->GetCurrentTime()`. Fixed to use widget's current time so keyframes place at red-line cursor.
+- **Dangling pointer fix**: `mTimelineWidget->SetKeyframes()` stores a raw pointer to `State.Keyframes` that gets invalidated on `push_back`/`erase`. Fixed by calling `SetKeyframes` after every mutation.
+
+### COMPLETED: Walk Cycle crash + arm swing + speed slider + projection save
+
+1. **Crash fix**: `vector::insert` inside `RunInHistorySequence` crashed because vector reallocation moves `QMap`-backed elements. Built frames locally via `push_back`, then `std::move` into `State.Frames` inside minimal history sequence wrapper.
+2. **Arm swing**: Detects Right Arm/Left Arm groups. Oppose-phase rotation via `MinifigWizard::SetAngle(LC_MFW_RARM/LC_MFW_LARM)` matching leg delta-matrix approach.
+3. **Speed slider**: Replaced Duration spinbox with horizontal slider (1-10). Steps = `4 + (10 - speed) * 4` (4-40 frames).
+4. **Camera projection save**: `SnapshotFrame` captures `Camera->GetProjection()`, restored by `lcPoseAnimateFrame`, persisted in `.animate.json`. Also propagated to `lcKeyframePose` + `BakeKeyframes()`.
+5. **Keyframe placement**: `AddKeyframeClicked` now uses `mTimelineWidget->GetCurrentTime()`.
+6. **Disclosure**: arm swing and projection math algebraically sound but not visually verified. Same risk as Walk Cycle.
 
 ## Session housekeeping notes
 

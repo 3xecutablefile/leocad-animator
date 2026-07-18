@@ -1333,6 +1333,7 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 			Frame.CameraPosition = lcLerp(KfA->Pose.CameraPosition, KfB->Pose.CameraPosition, eased);
 			Frame.CameraTarget = lcLerp(KfA->Pose.CameraTarget, KfB->Pose.CameraTarget, eased);
 			Frame.CameraUpVector = lcLerp(KfA->Pose.CameraUpVector, KfB->Pose.CameraUpVector, eased);
+			Frame.CameraProjection = KfA->Pose.CameraProjection;
 			Frame.HasCamera = true;
 		}
 		else if (KfA->Pose.HasCamera)
@@ -1340,6 +1341,7 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 			Frame.CameraPosition = KfA->Pose.CameraPosition;
 			Frame.CameraTarget = KfA->Pose.CameraTarget;
 			Frame.CameraUpVector = KfA->Pose.CameraUpVector;
+			Frame.CameraProjection = KfA->Pose.CameraProjection;
 			Frame.HasCamera = true;
 		}
 		else if (KfB->Pose.HasCamera)
@@ -1347,6 +1349,7 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 			Frame.CameraPosition = KfB->Pose.CameraPosition;
 			Frame.CameraTarget = KfB->Pose.CameraTarget;
 			Frame.CameraUpVector = KfB->Pose.CameraUpVector;
+			Frame.CameraProjection = KfB->Pose.CameraProjection;
 			Frame.HasCamera = true;
 		}
 	}
@@ -1361,7 +1364,7 @@ void lcAnimateWidget::AddKeyframeClicked()
 	lcAnimateDocumentState& State = GetState(Model);
 
 	lcKeyframePoint Pt;
-	Pt.Time = State.CurrentFrameIndex;
+	Pt.Time = mTimelineWidget->GetCurrentTime();
 	Pt.Pose.Positions.clear();
 	Pt.Pose.Rotations.clear();
 
@@ -1378,11 +1381,13 @@ void lcAnimateWidget::AddKeyframeClicked()
 			Pt.Pose.CameraPosition = Camera->GetPosition();
 			Pt.Pose.CameraTarget = Camera->GetTargetPosition();
 			Pt.Pose.CameraUpVector = Camera->GetUpVector();
+			Pt.Pose.CameraProjection = Camera->GetProjection();
 			Pt.Pose.HasCamera = true;
 		}
 	}
 
 	State.Keyframes.push_back(Pt);
+	mTimelineWidget->SetKeyframes(&State.Keyframes);
 	BakeKeyframes(Model, State);
 	RefreshFilmstrip(Model);
 	mTimelineWidget->SetFrameRange(0, std::max((int)State.Frames.size(), 10));
@@ -1403,6 +1408,7 @@ void lcAnimateWidget::DeleteKeyframeClicked()
 		return;
 
 	State.Keyframes.erase(State.Keyframes.begin() + Sel);
+	mTimelineWidget->SetKeyframes(&State.Keyframes);
 
 	if (State.Keyframes.size() < 2)
 	{

@@ -70,6 +70,7 @@ struct lcKeyframePose
 	lcVector3 CameraPosition = lcVector3(0.0f, 0.0f, 0.0f);
 	lcVector3 CameraTarget = lcVector3(0.0f, 0.0f, 0.0f);
 	lcVector3 CameraUpVector = lcVector3(0.0f, 1.0f, 0.0f);
+	lcCameraProjection CameraProjection = lcCameraProjection::Perspective;
 	bool HasCamera = false;
 };
 
