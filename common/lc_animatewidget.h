@@ -130,6 +130,8 @@ public slots:
 	void DeleteKeyframeClicked();
 	void EasingChanged(int Index);
 	void TimelineKeyframeSelected(int Index);
+	void TimelineTimeDragged(int Frame);
+	void TimelineStep(int Delta);
 
 protected:
 	lcAnimateDocumentState& GetState(lcModel* Model);
@@ -144,6 +146,8 @@ protected:
 	QListWidget* mFilmstrip;
 	QWidget* mKeyframeControls;
 	lcKeyframeTimelineWidget* mTimelineWidget;
+	QPushButton* mStepBackButton;
+	QPushButton* mStepForwardButton;
 	QPushButton* mAddKeyframeButton;
 	QPushButton* mDeleteKeyframeButton;
 	QComboBox* mEasingCombo;

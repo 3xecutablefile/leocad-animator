@@ -178,7 +178,12 @@ void lcKeyframeTimelineWidget::mouseMoveEvent(QMouseEvent* Event)
 {
 	if (Event->buttons() & Qt::LeftButton && mSelectedIndex < 0 && mSelectedSegment < 0)
 	{
-		mCurrentTime = qBound(mFrameStart, XToTime(Event->x()), mFrameEnd);
-		update();
+		const int newTime = qBound(mFrameStart, XToTime(Event->x()), mFrameEnd);
+		if (newTime != mCurrentTime)
+		{
+			mCurrentTime = newTime;
+			emit CurrentTimeDragged(mCurrentTime);
+			update();
+		}
 	}
 }

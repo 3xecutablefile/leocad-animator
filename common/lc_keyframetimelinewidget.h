@@ -23,6 +23,7 @@ public:
 
 signals:
 	void KeyframeSelected(int Index);
+	void CurrentTimeDragged(int Frame);
 
 protected:
 	void paintEvent(QPaintEvent* Event) override;

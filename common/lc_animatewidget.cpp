@@ -232,10 +232,18 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	KFLayout->setContentsMargins(0, 0, 0, 0);
 
 	QHBoxLayout* KFButtonRow = new QHBoxLayout;
+	mStepBackButton = new QPushButton(tr("<<"), this);
+	mStepBackButton->setToolTip(tr("Step back 10 frames"));
+	mStepBackButton->setFixedWidth(32);
+	mStepForwardButton = new QPushButton(tr(">>"), this);
+	mStepForwardButton->setToolTip(tr("Step forward 10 frames"));
+	mStepForwardButton->setFixedWidth(32);
 	mAddKeyframeButton = new QPushButton(tr("Add Keyframe"), this);
 	mAddKeyframeButton->setToolTip(tr("Capture the current pose as a new keyframe on the timeline"));
 	mDeleteKeyframeButton = new QPushButton(tr("Delete Keyframe"), this);
 	mDeleteKeyframeButton->setToolTip(tr("Remove the selected keyframe"));
+	KFButtonRow->addWidget(mStepBackButton);
+	KFButtonRow->addWidget(mStepForwardButton);
 	KFButtonRow->addWidget(mAddKeyframeButton);
 	KFButtonRow->addWidget(mDeleteKeyframeButton);
 	KFButtonRow->addWidget(new QLabel(tr("Easing:"), this));
@@ -283,6 +291,9 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(mDeleteKeyframeButton, &QPushButton::clicked, this, &lcAnimateWidget::DeleteKeyframeClicked);
 	connect(mEasingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &lcAnimateWidget::EasingChanged);
 	connect(mTimelineWidget, &lcKeyframeTimelineWidget::KeyframeSelected, this, &lcAnimateWidget::TimelineKeyframeSelected);
+	connect(mTimelineWidget, &lcKeyframeTimelineWidget::CurrentTimeDragged, this, &lcAnimateWidget::TimelineTimeDragged);
+	connect(mStepBackButton, &QPushButton::clicked, this, [this]() { TimelineStep(-10); });
+	connect(mStepForwardButton, &QPushButton::clicked, this, [this]() { TimelineStep(10); });
 
 	SocketModeToggled(mSocketModeCheck->isChecked());
 }
@@ -1288,6 +1299,35 @@ void lcAnimateWidget::TimelineKeyframeSelected(int Index)
 	{
 		State.CurrentFrameIndex = State.Keyframes[Index].Time;
 		mEasingCombo->setCurrentIndex(static_cast<int>(State.Keyframes[Index].SegmentEasing));
+		ApplyFrame(Model, State.CurrentFrameIndex);
+		mTimelineWidget->SetCurrentTime(State.CurrentFrameIndex);
+		Update();
+	}
+}
+
+void lcAnimateWidget::TimelineTimeDragged(int Frame)
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	lcAnimateDocumentState& State = GetState(Model);
+	State.CurrentFrameIndex = qBound(0, Frame, std::max(0, (int)State.Frames.size() - 1));
+	ApplyFrame(Model, State.CurrentFrameIndex);
+	Update();
+}
+
+void lcAnimateWidget::TimelineStep(int Delta)
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	lcAnimateDocumentState& State = GetState(Model);
+	const int NewFrame = qBound(0, State.CurrentFrameIndex + Delta, std::max(0, (int)State.Frames.size() - 1));
+	if (NewFrame != State.CurrentFrameIndex)
+	{
+		State.CurrentFrameIndex = NewFrame;
 		ApplyFrame(Model, State.CurrentFrameIndex);
 		mTimelineWidget->SetCurrentTime(State.CurrentFrameIndex);
 		Update();
