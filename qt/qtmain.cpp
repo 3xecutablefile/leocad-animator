@@ -64,7 +64,7 @@ static LONG WINAPI lcSehHandler(PEXCEPTION_POINTERS exceptionPointers)
 		lstrcat(message, gMinidumpPath);
 		lstrcat(message, TEXT("', please send it to the developers for debugging."));
 
-		MessageBox(nullptr, message, TEXT("LeoCAD"), MB_OK);
+		MessageBox(nullptr, message, TEXT("StopMotionDigital"), MB_OK);
 	}
 
 	return EXCEPTION_EXECUTE_HANDLER;
@@ -138,11 +138,11 @@ static void lcInitializeSurfaceFormat(int argc, char* argv[])
 
 int main(int argc, char *argv[])
 {
-	QCoreApplication::setOrganizationDomain(QLatin1String("leocad.org"));
-	QCoreApplication::setOrganizationName(QLatin1String("LeoCAD Software"));
-	QCoreApplication::setApplicationName(QLatin1String("LeoCAD"));
+	QCoreApplication::setOrganizationDomain(QLatin1String("stopmotiondigital.app"));
+	QCoreApplication::setOrganizationName(QLatin1String("StopMotionDigital"));
+	QCoreApplication::setApplicationName(QLatin1String("StopMotionDigital"));
 	QCoreApplication::setApplicationVersion(QLatin1String(LC_VERSION_TEXT));
-	QGuiApplication::setDesktopFileName(QLatin1String("leocad"));
+	QGuiApplication::setDesktopFileName(QLatin1String("stopmotiondigital"));
 
 	lcInitializeSurfaceFormat(argc, argv);
 

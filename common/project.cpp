@@ -801,7 +801,7 @@ bool Project::Export3DStudio(const QString& FileName)
 
 	if (ModelParts.empty())
 	{
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("Nothing to export."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("Nothing to export."));
 		return false;
 	}
 
@@ -814,7 +814,7 @@ bool Project::Export3DStudio(const QString& FileName)
 
 	if (!File.Open(QIODevice::WriteOnly))
 	{
-		QMessageBox::warning(gMainWindow, tr("LeoCAD"), tr("Could not open file '%1' for writing.").arg(SaveFileName));
+		QMessageBox::warning(gMainWindow, tr("StopMotionDigital"), tr("Could not open file '%1' for writing.").arg(SaveFileName));
 		return false;
 	}
 
@@ -1245,7 +1245,7 @@ void Project::ExportBrickLink()
 
 	if (PartsList.empty())
 	{
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("Nothing to export."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("Nothing to export."));
 		return;
 	}
 
@@ -1263,7 +1263,7 @@ bool Project::ExportCOLLADA(const QString& FileName)
 
 	if (ModelParts.empty())
 	{
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("Nothing to export."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("Nothing to export."));
 		return false;
 	}
 
@@ -1276,7 +1276,7 @@ bool Project::ExportCOLLADA(const QString& FileName)
 
 	if (!File.open(QIODevice::WriteOnly))
 	{
-		QMessageBox::warning(gMainWindow, tr("LeoCAD"), tr("Could not open file '%1' for writing.").arg(SaveFileName));
+		QMessageBox::warning(gMainWindow, tr("StopMotionDigital"), tr("Could not open file '%1' for writing.").arg(SaveFileName));
 		return false;
 	}
 
@@ -1538,7 +1538,7 @@ bool Project::ExportCSV(const QString& FileName)
 
 	if (PartsList.empty())
 	{
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("Nothing to export."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("Nothing to export."));
 		return false;
 	}
 
@@ -1552,7 +1552,7 @@ bool Project::ExportCSV(const QString& FileName)
 
 	if (!CSVFile.Open(QIODevice::WriteOnly))
 	{
-		QMessageBox::warning(gMainWindow, tr("LeoCAD"), tr("Could not open file '%1' for writing.").arg(SaveFileName));
+		QMessageBox::warning(gMainWindow, tr("StopMotionDigital"), tr("Could not open file '%1' for writing.").arg(SaveFileName));
 		return false;
 	}
 
@@ -2497,7 +2497,7 @@ bool Project::ExportWavefront(const QString& FileName)
 
 	if (ModelParts.empty())
 	{
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("Nothing to export."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("Nothing to export."));
 		return false;
 	}
 
@@ -2511,7 +2511,7 @@ bool Project::ExportWavefront(const QString& FileName)
 
 	if (!OBJFile.Open(QIODevice::WriteOnly))
 	{
-		QMessageBox::warning(gMainWindow, tr("LeoCAD"), tr("Could not open file '%1' for writing.").arg(SaveFileName));
+		QMessageBox::warning(gMainWindow, tr("StopMotionDigital"), tr("Could not open file '%1' for writing.").arg(SaveFileName));
 		return false;
 	}
 
@@ -2528,7 +2528,7 @@ bool Project::ExportWavefront(const QString& FileName)
 	lcDiskFile MaterialFile(MaterialFileName);
 	if (!MaterialFile.Open(QIODevice::WriteOnly))
 	{
-		QMessageBox::warning(gMainWindow, tr("LeoCAD"), tr("Could not open file '%1' for writing.").arg(MaterialFileName));
+		QMessageBox::warning(gMainWindow, tr("StopMotionDigital"), tr("Could not open file '%1' for writing.").arg(MaterialFileName));
 		return false;
 	}
 

@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>About LeoCAD</string>
+   <string>About StopMotionDigital</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
@@ -39,14 +39,14 @@
          <item>
           <widget class="QLabel" name="version">
            <property name="text">
-            <string>LeoCAD Version 0.00.0</string>
+            <string>StopMotionDigital Version 0.00.0</string>
            </property>
           </widget>
          </item>
          <item>
           <widget class="QLabel" name="label_4">
            <property name="text">
-            <string>LeoCAD is a free application for creating virtual LEGO models.</string>
+            <string>StopMotionDigital is a free application for creating virtual LEGO stop-motion animations, built on LeoCAD.</string>
            </property>
            <property name="wordWrap">
             <bool>true</bool>

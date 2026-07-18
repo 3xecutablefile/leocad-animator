@@ -21,7 +21,7 @@ void lcHttpReply::run()
 
 	static_assert(sizeof(wchar_t) == sizeof(QChar), "Character size mismatch");
 
-	Session = InternetOpen(L"LeoCAD", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+	Session = InternetOpen(L"StopMotionDigital", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
 
 	if (!Session)
 		return;

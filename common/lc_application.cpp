@@ -187,7 +187,7 @@ void lcPreferences::SetInterfaceColors(lcColorTheme ColorTheme)
 lcApplication::lcApplication(int& Argc, char** Argv)
 	: QApplication(Argc, Argv)
 {
-	setApplicationDisplayName(QLatin1String("LeoCAD"));
+	setApplicationDisplayName(QLatin1String("StopMotionDigital"));
 
 	gApplication = this;
 	mDefaultStyle = style()->objectName();
@@ -967,7 +967,7 @@ lcStartupMode lcApplication::Initialize(const QList<QPair<QString, bool>>& Libra
 			Message = tr("LeoCAD could not load Parts Library.\n\nPlease visit https://www.leocad.org for information on how to download and install a library.");
 
 		if (gMainWindow)
-			QMessageBox::information(gMainWindow, tr("LeoCAD"), Message);
+			QMessageBox::information(gMainWindow, tr("StopMotionDigital"), Message);
 		else
 		{
 			StdErr << Message << "\n";
@@ -1357,7 +1357,7 @@ void lcApplication::ShowPreferencesDialog()
 	lcSetProfileInt(LC_PROFILE_STUD_STYLE, static_cast<int>(Options.StudStyle));
 
 	if (LanguageChanged || LibraryChanged || AAChanged)
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("Some changes will only take effect the next time you start LeoCAD."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("Some changes will only take effect the next time you start StopMotionDigital."));
 
 	if (Options.CategoriesModified)
 	{
