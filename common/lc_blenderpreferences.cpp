@@ -23,7 +23,7 @@ const auto SkipEmptyParts = QString::SplitBehavior::SkipEmptyParts;
 
 const QLatin1String LineEnding("\r\n");
 
-#define LC_PRODUCTNAME_STR                 "LeoCAD"
+#define LC_PRODUCTNAME_STR                 "StopMotionDigital"
 #define LC_BLENDER_ADDON                   "ImportLDraw"
 #define LC_BLENDER_ADDON_MM                "ImportLDrawMM"
 #define LC_BLENDER_ADDON_FILE              "LDrawBlenderRenderAddons.zip"

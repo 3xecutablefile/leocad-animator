@@ -28,10 +28,10 @@ CONFIG += precompile_header incremental c++17 force_debug_info
 win32 {
 	RC_ICONS = resources/leocad.ico
 	VERSION = 25.9.0.0
-	QMAKE_TARGET_COMPANY = LeoCAD Software
-	QMAKE_TARGET_DESCRIPTION = LeoCAD
+	QMAKE_TARGET_COMPANY = StopMotionDigital
+	QMAKE_TARGET_DESCRIPTION = StopMotionDigital
 	QMAKE_TARGET_COPYRIGHT = "Copyright (C) LeoCAD.org"
-	QMAKE_TARGET_PRODUCT = LeoCAD
+	QMAKE_TARGET_PRODUCT = StopMotionDigital
 	RC_CODEPAGE = 1252
 	RC_LANG = 0x0409
 
@@ -76,7 +76,7 @@ APPVEYOR_REPO_COMMIT = $$(APPVEYOR_REPO_COMMIT)
 	isEmpty(APPVEYOR_REPO_TAG) {
 		DEFINES += "LC_CONTINUOUS_BUILD=$$system(git rev-parse --short HEAD)"
 		VERSION = 0.0.0.1
-		QMAKE_TARGET_DESCRIPTION = "LeoCAD Continuous Build $$system(git rev-parse --short HEAD)"
+		QMAKE_TARGET_DESCRIPTION = "StopMotionDigital Continuous Build $$system(git rev-parse --short HEAD)"
 	}
 }
 
@@ -90,9 +90,9 @@ QMAKE_EXTRA_COMPILERS += lrelease
 system($$QMAKE_LRELEASE -silent $$TSFILES)
 
 unix:!macx {
-	TARGET = leocad
+	TARGET = stopmotiondigital
 } else {
-	TARGET = LeoCAD
+	TARGET = StopMotionDigital
 }
 
 CONFIG(debug, debug|release) {
@@ -182,6 +182,8 @@ SOURCES += \
 	common/project.cpp \
 	common/texfont.cpp \
 	common/lc_aboutdialog.cpp \
+	common/lc_animateexportdialog.cpp \
+	common/lc_animatewidget.cpp \
 	common/lc_application.cpp \
 	common/lc_arraydialog.cpp \
 	common/lc_blenderpreferences.cpp \
@@ -197,6 +199,7 @@ SOURCES += \
 	common/lc_doublespinbox.cpp \
 	common/lc_edgecolordialog.cpp \
 	common/lc_editgroupsdialog.cpp \
+	common/lc_ffmpegargs.cpp \
 	common/lc_file.cpp \
 	common/lc_filter.cpp \
 	common/lc_findreplacewidget.cpp \
@@ -260,6 +263,8 @@ HEADERS += \
 	common/project.h \
 	common/texfont.h \
 	common/lc_aboutdialog.h \
+	common/lc_animateexportdialog.h \
+	common/lc_animatewidget.h \
 	common/lc_application.h \
 	common/lc_arraydialog.h \
 	common/lc_blenderpreferences.h \
@@ -275,6 +280,7 @@ HEADERS += \
 	common/lc_doublespinbox.h \
 	common/lc_edgecolordialog.h \
 	common/lc_editgroupsdialog.h \
+	common/lc_ffmpegargs.h \
 	common/lc_file.h \
 	common/lc_filter.h \
 	common/lc_findreplacewidget.h \

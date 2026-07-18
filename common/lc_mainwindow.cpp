@@ -5,6 +5,7 @@
 #include "lc_partselectionwidget.h"
 #include "lc_propertieswidget.h"
 #include "lc_timelinewidget.h"
+#include "lc_animatewidget.h"
 #include "lc_viewwidget.h"
 #include "lc_colorlist.h"
 #include "lc_qutils.h"
@@ -64,7 +65,7 @@ lcMainWindow::lcMainWindow()
 	mAngleSnapEnabled = true;
 	mMoveXYSnapIndex = 4;
 	mMoveZSnapIndex = 3;
-	mAngleSnapIndex = 5;
+	mAngleSnapIndex = 1; // 1 degree (AngleTable: 0, 1, 5, 15, 22.5, 30, 45, 60, 90, 180) - finer control for posing
 	mRelativeTransform = true;
 	mLocalTransform = false;
 	mCurrentPieceInfo = nullptr;
@@ -549,6 +550,7 @@ void lcMainWindow::CreateMenus()
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_PROPERTIES]);
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_TIMELINE]);
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_PREVIEW]);
+	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_ANIMATE]);
 	ToolBarsMenu->addSeparator();
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_STANDARD]);
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_TOOLS]);
@@ -680,6 +682,7 @@ void lcMainWindow::CreateToolBars()
 	mTimeToolBar->addAction(mActions[LC_VIEW_TIME_NEXT]);
 	mTimeToolBar->addAction(mActions[LC_VIEW_TIME_LAST]);
 	mTimeToolBar->addAction(mActions[LC_VIEW_TIME_ADD_KEYS]);
+	mTimeToolBar->setVisible(false); // superseded by the Animate dock's filmstrip/capture controls
 
 	mToolsToolBar = addToolBar(tr("Tools"));
 	mToolsToolBar->setObjectName("ToolsToolbar");
@@ -792,6 +795,16 @@ void lcMainWindow::CreateToolBars()
 
 	mTimelineToolBar->setWidget(mTimelineWidget);
 	addDockWidget(Qt::RightDockWidgetArea, mTimelineToolBar);
+	// Kept visible: doubles as a piece outliner (select+delete parts that are hard to click
+	// directly in the 3D view, e.g. overlapping minifig parts), not just step navigation.
+
+	mAnimateToolBar = new QDockWidget(tr("Animate"), this);
+	mAnimateToolBar->setObjectName("AnimateToolbar");
+
+	mAnimateWidget = new lcAnimateWidget(mAnimateToolBar);
+
+	mAnimateToolBar->setWidget(mAnimateWidget);
+	addDockWidget(Qt::BottomDockWidgetArea, mAnimateToolBar);
 
 	CreatePreviewWidget();
 
@@ -801,6 +814,7 @@ void lcMainWindow::CreateToolBars()
 
 	connect(mPropertiesToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 	connect(mTimelineToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
+	connect(mAnimateToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 	connect(mPartsToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 	connect(mColorsToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 
@@ -992,6 +1006,7 @@ QMenu* lcMainWindow::createPopupMenu()
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_PROPERTIES]);
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_TIMELINE]);
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_PREVIEW]);
+	Menu->addAction(mActions[LC_VIEW_TOOLBAR_ANIMATE]);
 	Menu->addSeparator();
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_STANDARD]);
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_TOOLS]);
@@ -1006,6 +1021,7 @@ void lcMainWindow::UpdateDockWidgetActions()
 	mActions[LC_VIEW_TOOLBAR_COLORS]->setChecked(mColorsToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_PROPERTIES]->setChecked(mPropertiesToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_TIMELINE]->setChecked(mTimelineToolBar->isVisible());
+	mActions[LC_VIEW_TOOLBAR_ANIMATE]->setChecked(mAnimateToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_STANDARD]->setChecked(mStandardToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_TOOLS]->setChecked(mToolsToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_TIME]->setChecked(mTimeToolBar->isVisible());
@@ -1394,7 +1410,7 @@ void lcMainWindow::ShowSelectDialog()
 	
 	if (ActiveModel->GetPieces().empty() && ActiveModel->GetCameras().empty() && ActiveModel->GetLights().empty())
 	{
-		QMessageBox::information(this, tr("LeoCAD"), tr("Nothing to select."));
+		QMessageBox::information(this, tr("StopMotionDigital"), tr("Nothing to select."));
 		return;
 	}
 
@@ -2158,7 +2174,9 @@ void lcMainWindow::UpdateCurrentStep()
 	mActions[LC_VIEW_TIME_NEXT]->setEnabled(CurrentStep < LC_STEP_MAX);
 	mActions[LC_VIEW_TIME_LAST]->setEnabled(CurrentStep != LastStep);
 
-	mStatusTimeLabel->setText(QString(tr("Step %1")).arg(QString::number(CurrentStep)));
+	mStatusTimeLabel->setText(QString(tr("Frame %1")).arg(QString::number(CurrentStep)));
+
+	mAnimateWidget->Update();
 }
 
 void lcMainWindow::SetAddKeys(bool AddKeys)
@@ -2504,9 +2522,9 @@ void lcMainWindow::ShowMergeDialog()
 	}
 
 	if (ModelCount == 1)
-		QMessageBox::information(this, tr("LeoCAD"), tr("Merged 1 submodel."));
+		QMessageBox::information(this, tr("StopMotionDigital"), tr("Merged 1 submodel."));
 	else
-		QMessageBox::information(this, tr("LeoCAD"), tr("Merged %1 submodels.").arg(ModelCount));
+		QMessageBox::information(this, tr("StopMotionDigital"), tr("Merged %1 submodels.").arg(ModelCount));
 
 	UpdateModels();
 }
@@ -2914,6 +2932,10 @@ void lcMainWindow::HandleCommand(lcCommandId CommandId)
 
 	case LC_VIEW_TOOLBAR_TIMELINE:
 		ToggleDockWidget(mTimelineToolBar);
+		break;
+
+	case LC_VIEW_TOOLBAR_ANIMATE:
+		ToggleDockWidget(mAnimateToolBar);
 		break;
 
 	case LC_VIEW_TOOLBAR_PREVIEW:

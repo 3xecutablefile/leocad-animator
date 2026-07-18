@@ -1381,7 +1381,7 @@ QImage lcModel::GetStepImage(bool Zoom, int Width, int Height, lcStep Step)
 
 	if (!View.BeginRenderToImage(Width, Height))
 	{
-		QMessageBox::warning(gMainWindow, tr("LeoCAD"), tr("Error creating images."));
+		QMessageBox::warning(gMainWindow, tr("StopMotionDigital"), tr("Error creating images."));
 		return QImage();
 	}
 
@@ -1460,7 +1460,7 @@ QImage lcModel::GetPartsListImage(int MaxWidth, lcStep Step, quint32 BackgroundC
 
 	if (!View.BeginRenderToImage(ThumbnailSize, ThumbnailSize))
 	{
-		QMessageBox::warning(gMainWindow, tr("LeoCAD"), tr("Error creating images."));
+		QMessageBox::warning(gMainWindow, tr("StopMotionDigital"), tr("Error creating images."));
 		return QImage();
 	}
 
@@ -3331,7 +3331,7 @@ void lcModel::InlineSelectedModels()
 
 	if (!Modified)
 	{
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("No models selected."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("No models selected."));
 
 		DiscardHistorySequence();
 
@@ -5460,7 +5460,7 @@ void lcModel::ShowArrayDialog()
 
 	if (!GetPieceFocusOrSelectionCenter(Center))
 	{
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("No pieces selected."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("No pieces selected."));
 		return;
 	}
 
@@ -5471,7 +5471,7 @@ void lcModel::ShowArrayDialog()
 
 	if (Dialog.mCounts[0] * Dialog.mCounts[1] * Dialog.mCounts[2] < 2)
 	{
-		QMessageBox::information(gMainWindow, tr("LeoCAD"), tr("Array only has 1 element or less, no pieces added."));
+		QMessageBox::information(gMainWindow, tr("StopMotionDigital"), tr("Array only has 1 element or less, no pieces added."));
 		return;
 	}
 
@@ -5547,26 +5547,69 @@ void lcModel::ShowMinifigDialog()
 	BeginHistorySequence();
 	BeginEditHistory(lcModelHistoryEditMerge::None);
 
-	lcGroup* Group = AddGroup(tr("Minifig #"), nullptr);
 	std::vector<lcObject*> Pieces;
 	lcMinifig& Minifig = Dialog.mMinifigWizard->mMinifig;
 
 	Pieces.reserve(LC_MFW_NUMITEMS);
 
-	for (int PartIndex = 0; PartIndex < LC_MFW_NUMITEMS; PartIndex++)
+	if (Dialog.IsPosable())
 	{
-		if (!Minifig.Parts[PartIndex])
-			continue;
+		// One group per limb assembly so parts can be posed independently, but a hand (and
+		// anything it's holding) always stays grouped with its own arm - they should never be
+		// separated since a hand doesn't make sense detached from its arm.
+		static const struct { int PartIndex; int AssemblyIndex; } PartAssembly[] =
+		{
+			{ LC_MFW_HATS, 0 }, { LC_MFW_HATS2, 0 }, { LC_MFW_HEAD, 0 }, { LC_MFW_NECK, 0 },
+			{ LC_MFW_BODY, 1 }, { LC_MFW_BODY2, 1 }, { LC_MFW_BODY3, 1 },
+			{ LC_MFW_RARM, 2 }, { LC_MFW_RHAND, 2 }, { LC_MFW_RHANDA, 2 },
+			{ LC_MFW_LARM, 3 }, { LC_MFW_LHAND, 3 }, { LC_MFW_LHANDA, 3 },
+			{ LC_MFW_RLEG, 4 }, { LC_MFW_RLEGA, 4 },
+			{ LC_MFW_LLEG, 5 }, { LC_MFW_LLEGA, 5 }
+		};
 
-		lcPiece* Piece = new lcPiece(Minifig.Parts[PartIndex]);
+		static const char* AssemblyNames[] = { "Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg" };
+		lcGroup* AssemblyGroups[6] = {};
 
-		Piece->Initialize(Minifig.Matrices[PartIndex], mCurrentStep);
-		Piece->SetColorIndex(Minifig.ColorIndices[PartIndex]);
-		Piece->SetGroup(Group);
-		AddPiece(Piece);
-		Piece->UpdatePosition(mCurrentStep);
+		for (const auto& Entry : PartAssembly)
+		{
+			if (!Minifig.Parts[Entry.PartIndex])
+				continue;
 
-		Pieces.emplace_back(Piece);
+			lcGroup*& AssemblyGroup = AssemblyGroups[Entry.AssemblyIndex];
+
+			if (!AssemblyGroup)
+				AssemblyGroup = AddGroup(tr("Minifig %1 #").arg(QString::fromLatin1(AssemblyNames[Entry.AssemblyIndex])), nullptr);
+
+			lcPiece* Piece = new lcPiece(Minifig.Parts[Entry.PartIndex]);
+
+			Piece->Initialize(Minifig.Matrices[Entry.PartIndex], mCurrentStep);
+			Piece->SetColorIndex(Minifig.ColorIndices[Entry.PartIndex]);
+			Piece->SetGroup(AssemblyGroup);
+			AddPiece(Piece);
+			Piece->UpdatePosition(mCurrentStep);
+
+			Pieces.emplace_back(Piece);
+		}
+	}
+	else
+	{
+		lcGroup* Group = AddGroup(tr("Minifig #"), nullptr);
+
+		for (int PartIndex = 0; PartIndex < LC_MFW_NUMITEMS; PartIndex++)
+		{
+			if (!Minifig.Parts[PartIndex])
+				continue;
+
+			lcPiece* Piece = new lcPiece(Minifig.Parts[PartIndex]);
+
+			Piece->Initialize(Minifig.Matrices[PartIndex], mCurrentStep);
+			Piece->SetColorIndex(Minifig.ColorIndices[PartIndex]);
+			Piece->SetGroup(Group);
+			AddPiece(Piece);
+			Piece->UpdatePosition(mCurrentStep);
+
+			Pieces.emplace_back(Piece);
+		}
 	}
 
 	EndEditHistory();

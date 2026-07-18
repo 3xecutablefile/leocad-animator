@@ -19,7 +19,7 @@
 				<string>application/vnd.leocad</string>
 			</array>
 			<key>CFBundleTypeName</key>
-			<string>LeoCAD Project</string>
+			<string>StopMotionDigital Project</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSTypeIsPackage</key>
@@ -51,11 +51,11 @@
 		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
-	<string>LeoCAD</string>
+	<string>StopMotionDigital</string>
 	<key>CFBundleIconFile</key>
 	<string>leocad.icns</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.leozide.leocad</string>
+	<string>com.stopmotiondigital.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundlePackageType</key>
@@ -65,9 +65,9 @@
 	<key>CFBundleVersion</key>
 	<string>25.09.0</string>
 	<key>CFBundleDisplayName</key>
-	<string>LeoCAD</string>
+	<string>StopMotionDigital</string>
 	<key>CFBundleName</key>
-	<string>LeoCAD</string>
+	<string>StopMotionDigital</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>
