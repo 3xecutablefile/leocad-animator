@@ -1,8 +1,27 @@
-# About LeoCAD
+# About LeoCAD Animator
 
-LeoCAD is a CAD program for creating virtual LEGO(R) models. It's available
-for free under the GNU Public License v2 and works on the Windows, Linux
-and macOS Operating Systems.
+LeoCAD Animator is a fork of [LeoCAD](https://github.com/leozide/leocad) that
+adds stop-motion keyframe animation on top of LeoCAD's existing set builder
+and minifig wizard. It's available for free under the GNU Public License v2
+and works on the Windows, Linux and macOS Operating Systems.
+
+## What's new in this fork
+
+An **Animate** dock (View > Toolbars > Animate) adds a frame timeline on top
+of LeoCAD's existing per-step keyframe engine:
+
+- Scrub or play back frames (steps) at a chosen fps.
+- **Record** toggles LeoCAD's existing "Add Keys" mode, so moving/rotating a
+  piece automatically keys it at the current frame.
+- **+ Frame** inserts a new blank frame after the current one.
+- **Add Keyframe** keys the position/rotation of the current selection at the
+  current frame without needing to move it first.
+- **Export Animation...** renders the frame range to an animated GIF, MP4
+  (via `ffmpeg` if it's on your `PATH`), or a PNG sequence.
+
+Camera/light keyframing and the two-pass GIF palette optimization aren't
+wired up yet — use the existing Properties dock keyframe checkboxes for
+cameras/lights, and expect larger-than-optimal single-pass GIFs for now.
 
 
 # Installation
