@@ -184,6 +184,7 @@ SOURCES += \
 	common/lc_aboutdialog.cpp \
 	common/lc_animateexportdialog.cpp \
 	common/lc_animatewidget.cpp \
+	common/lc_keyframetimelinewidget.cpp \
 	common/lc_application.cpp \
 	common/lc_arraydialog.cpp \
 	common/lc_blenderpreferences.cpp \
@@ -265,6 +266,7 @@ HEADERS += \
 	common/lc_aboutdialog.h \
 	common/lc_animateexportdialog.h \
 	common/lc_animatewidget.h \
+	common/lc_keyframetimelinewidget.h \
 	common/lc_application.h \
 	common/lc_arraydialog.h \
 	common/lc_blenderpreferences.h \

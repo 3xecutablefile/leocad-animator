@@ -1,5 +1,6 @@
 #include "lc_global.h"
 #include "lc_animatewidget.h"
+#include "lc_keyframetimelinewidget.h"
 #include "lc_animateexportdialog.h"
 #include "lc_model.h"
 #include "lc_mainwindow.h"
@@ -213,7 +214,43 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	ActionLayout->addWidget(mExportButton);
 	MainLayout->addLayout(ActionLayout);
 
-	// Row 3: frame filmstrip
+	// Row 3: mode selector (own row above filmstrip)
+	QHBoxLayout* ModeLayout = new QHBoxLayout;
+	mModeSelector = new QComboBox(this);
+	mModeSelector->addItem(tr("Stop Motion"));
+	mModeSelector->addItem(tr("Constant Keyframe"));
+	mModeSelector->setCurrentIndex(0);
+	ModeLayout->addWidget(new QLabel(tr("Mode:"), this));
+	ModeLayout->addWidget(mModeSelector);
+	ModeLayout->addStretch();
+	MainLayout->addLayout(ModeLayout);
+
+	// Row 4: keyframe timeline controls (hidden in Stop Motion mode)
+	mKeyframeControls = new QWidget(this);
+	mKeyframeControls->setVisible(false);
+	QVBoxLayout* KFLayout = new QVBoxLayout(mKeyframeControls);
+	KFLayout->setContentsMargins(0, 0, 0, 0);
+
+	QHBoxLayout* KFButtonRow = new QHBoxLayout;
+	mAddKeyframeButton = new QPushButton(tr("Add Keyframe"), this);
+	mAddKeyframeButton->setToolTip(tr("Capture the current pose as a new keyframe on the timeline"));
+	mDeleteKeyframeButton = new QPushButton(tr("Delete Keyframe"), this);
+	mDeleteKeyframeButton->setToolTip(tr("Remove the selected keyframe"));
+	KFButtonRow->addWidget(mAddKeyframeButton);
+	KFButtonRow->addWidget(mDeleteKeyframeButton);
+	KFButtonRow->addWidget(new QLabel(tr("Easing:"), this));
+	mEasingCombo = new QComboBox(this);
+	mEasingCombo->addItems({ tr("Linear"), tr("Ease In"), tr("Ease Out"), tr("Ease In/Out") });
+	KFButtonRow->addWidget(mEasingCombo);
+	KFButtonRow->addStretch();
+	KFLayout->addLayout(KFButtonRow);
+
+	mTimelineWidget = new lcKeyframeTimelineWidget(this);
+	KFLayout->addWidget(mTimelineWidget);
+
+	MainLayout->addWidget(mKeyframeControls);
+
+	// Row 5: frame filmstrip
 	mFilmstrip = new QListWidget(this);
 	mFilmstrip->setViewMode(QListView::IconMode);
 	mFilmstrip->setFlow(QListView::LeftToRight);
@@ -241,6 +278,11 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(mExportButton, &QPushButton::clicked, this, &lcAnimateWidget::ExportClicked);
 	connect(mFilmstrip, &QListWidget::currentRowChanged, this, &lcAnimateWidget::FilmstripItemChanged);
 	connect(mSocketModeCheck, &QCheckBox::toggled, this, &lcAnimateWidget::SocketModeToggled);
+	connect(mModeSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &lcAnimateWidget::ModeChanged);
+	connect(mAddKeyframeButton, &QPushButton::clicked, this, &lcAnimateWidget::AddKeyframeClicked);
+	connect(mDeleteKeyframeButton, &QPushButton::clicked, this, &lcAnimateWidget::DeleteKeyframeClicked);
+	connect(mEasingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &lcAnimateWidget::EasingChanged);
+	connect(mTimelineWidget, &lcKeyframeTimelineWidget::KeyframeSelected, this, &lcAnimateWidget::TimelineKeyframeSelected);
 
 	SocketModeToggled(mSocketModeCheck->isChecked());
 }
@@ -864,10 +906,6 @@ void lcAnimateWidget::WalkCycleClicked()
 	if (!Ok)
 		return;
 
-	const double StepDistance = QInputDialog::getDouble(this, tr("Walk Cycle"), tr("Distance to move forward per frame (LDraw units - use a negative number if the figure ends up walking backward):"), 20.0, -500.0, 500.0, 1, &Ok);
-	if (!Ok)
-		return;
-
 	// Reuses MinifigWizard's own angle-to-matrix math (the exact same code the Minifig Wizard's
 	// angle sliders use) instead of re-deriving hip rotation math here - it's already correct for
 	// every leg part in the catalog, including the non-obvious per-part pivot offsets.
@@ -883,6 +921,16 @@ void lcAnimateWidget::WalkCycleClicked()
 	const lcMatrix44 LLegNeutral = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
 	const lcMatrix44 LLegNeutralInv = lcMatrix44AffineInverse(LLegNeutral);
 
+	// Calculate step distance from the stride angle and the figure's leg geometry.
+	// The foot tip is at ground level, RootZ units below the body center (rotation origin).
+	// When the leg swings by StrideAngle, the foot tip moves forward by TotalLegLength * sin(StrideAngle).
+	// Over one full cycle (two steps), total forward = 2 * forward displacement.
+	// ponytail: TotalLegLength = RootZ (body center to ground); extracted from RLEG's Z offset.
+	const float HipOffset = 44.0f;
+	const float TotalLegLength = RLegNeutral.r[3].z + HipOffset;
+	const float ForwardDisplacement = TotalLegLength * sinf(LC_DTOR * static_cast<float>(StrideAngle));
+	const float StepDistance = (2.0f * ForwardDisplacement) / static_cast<float>(Steps);
+
 	struct lcStartPose { lcVector3 Position; lcMatrix33 Rotation; };
 	QMap<lcPiece*, lcStartPose> StartPoses;
 
@@ -894,8 +942,7 @@ void lcAnimateWidget::WalkCycleClicked()
 		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
 
 	// Walking forward is along the model's +Y axis, matching the leg hip swing axis convention used
-	// throughout minifig.cpp (RotationX for the hip means the foot travels along Y) - if a figure
-	// ends up walking backward, use a negative Step Distance above rather than changing this.
+	// throughout minifig.cpp (RotationX for the hip means the foot travels along Y).
 	const lcVector3 ForwardAxis(0.0f, 1.0f, 0.0f);
 
 	Model->RunInHistorySequence(tr("Walk Cycle"), [&]()
@@ -909,7 +956,8 @@ void lcAnimateWidget::WalkCycleClicked()
 			// in-between pose (contact - passing - contact - passing), and the sine's own slope
 			// naturally eases the swing in/out at each extreme instead of snapping to it at a
 			// constant angular speed.
-			const float Phase = LC_2PI * static_cast<float>(Step) / static_cast<float>(Steps);
+			// Phase goes from 0 to 2π so the last frame lands back at neutral (legs together).
+			const float Phase = LC_2PI * static_cast<float>(Step) / static_cast<float>(Steps - 1);
 			const float RightAngle = static_cast<float>(StrideAngle) * sinf(Phase);
 			const float LeftAngle = -RightAngle;
 
@@ -963,6 +1011,287 @@ void lcAnimateWidget::WalkCycleClicked()
 
 	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
 	Update();
+}
+
+void lcAnimateWidget::ModeChanged(int Index)
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	lcAnimateDocumentState& State = GetState(Model);
+	const lcAnimateMode NewMode = (Index == 0) ? lcAnimateMode::StopMotion : lcAnimateMode::ConstantKeyframe;
+
+	if (NewMode == State.AnimateMode)
+		return;
+
+	// Switching from Constant Keyframe → Stop Motion: bake sparse keyframes into full frame list.
+	if (State.AnimateMode == lcAnimateMode::ConstantKeyframe && NewMode == lcAnimateMode::StopMotion)
+	{
+		BakeKeyframes(Model, State);
+		RefreshFilmstrip(Model);
+	}
+
+	State.AnimateMode = NewMode;
+
+	// Capture button only makes sense in Stop Motion mode (Constant Keyframe uses the timeline).
+	mCaptureButton->setVisible(NewMode == lcAnimateMode::StopMotion);
+	mKeyframeControls->setVisible(NewMode == lcAnimateMode::ConstantKeyframe);
+
+	if (NewMode == lcAnimateMode::ConstantKeyframe)
+	{
+		mTimelineWidget->SetKeyframes(&State.Keyframes);
+		mTimelineWidget->SetFrameRange(0, std::max((int)State.Frames.size(), 10));
+		mTimelineWidget->SetCurrentTime(State.CurrentFrameIndex);
+	}
+
+	Update();
+}
+
+void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& State)
+{
+	if (State.Keyframes.size() < 2)
+	{
+		State.Frames.clear();
+		return;
+	}
+
+	std::sort(State.Keyframes.begin(), State.Keyframes.end(),
+		[](const lcKeyframePoint& a, const lcKeyframePoint& b) { return a.Time < b.Time; });
+
+	const int FirstTime = State.Keyframes.front().Time;
+	const int LastTime = State.Keyframes.back().Time;
+
+	State.Frames.resize(LastTime - FirstTime + 1);
+	State.ThumbnailCache.clear();
+
+	for (int i = 0; i < (int)State.Frames.size(); i++)
+	{
+		lcAnimateFrame& Frame = State.Frames[i];
+		const int FrameTime = FirstTime + i;
+
+		// Find the two keyframes bracketing this frame
+		const lcKeyframePoint* KfA = nullptr;
+		const lcKeyframePoint* KfB = nullptr;
+
+		for (size_t j = 0; j < State.Keyframes.size() - 1; j++)
+		{
+			if (FrameTime >= State.Keyframes[j].Time && FrameTime <= State.Keyframes[j + 1].Time)
+			{
+				KfA = &State.Keyframes[j];
+				KfB = &State.Keyframes[j + 1];
+				break;
+			}
+		}
+
+		if (!KfA || !KfB)
+		{
+			const lcKeyframePoint* Nearest = &State.Keyframes.front();
+			for (const lcKeyframePoint& Kf : State.Keyframes)
+				if (abs(Kf.Time - FrameTime) < abs(Nearest->Time - FrameTime))
+					Nearest = &Kf;
+			Frame.Positions = Nearest->Pose.Positions;
+			Frame.Rotations = Nearest->Pose.Rotations;
+			Frame.CameraPosition = Nearest->Pose.CameraPosition;
+			Frame.CameraTarget = Nearest->Pose.CameraTarget;
+			Frame.CameraUpVector = Nearest->Pose.CameraUpVector;
+			Frame.HasCamera = Nearest->Pose.HasCamera;
+			continue;
+		}
+
+		if (FrameTime == KfA->Time)
+		{
+			Frame.Positions = KfA->Pose.Positions;
+			Frame.Rotations = KfA->Pose.Rotations;
+			Frame.CameraPosition = KfA->Pose.CameraPosition;
+			Frame.CameraTarget = KfA->Pose.CameraTarget;
+			Frame.CameraUpVector = KfA->Pose.CameraUpVector;
+			Frame.HasCamera = KfA->Pose.HasCamera;
+			continue;
+		}
+
+		if (FrameTime == KfB->Time)
+		{
+			Frame.Positions = KfB->Pose.Positions;
+			Frame.Rotations = KfB->Pose.Rotations;
+			Frame.CameraPosition = KfB->Pose.CameraPosition;
+			Frame.CameraTarget = KfB->Pose.CameraTarget;
+			Frame.CameraUpVector = KfB->Pose.CameraUpVector;
+			Frame.HasCamera = KfB->Pose.HasCamera;
+			continue;
+		}
+
+		const float t = static_cast<float>(FrameTime - KfA->Time) / static_cast<float>(KfB->Time - KfA->Time);
+		const float eased = ApplyEasing(KfA->SegmentEasing, t);
+
+		// Interpolate positions
+		Frame.Positions.clear();
+		for (auto It = KfA->Pose.Positions.constBegin(); It != KfA->Pose.Positions.constEnd(); ++It)
+		{
+			if (KfB->Pose.Positions.contains(It.key()))
+				Frame.Positions[It.key()] = lcLerp(It.value(), KfB->Pose.Positions.value(It.key()), eased);
+			else
+				Frame.Positions[It.key()] = It.value();
+		}
+		for (auto It = KfB->Pose.Positions.constBegin(); It != KfB->Pose.Positions.constEnd(); ++It)
+		{
+			if (!Frame.Positions.contains(It.key()))
+				Frame.Positions[It.key()] = It.value();
+		}
+
+		// Interpolate rotations via axis-angle decomposition
+		// ponytail: axis-angle lerp is exact for single-axis rotations (handles all minifig poses)
+		// and a reasonable approximation for multi-axis. Full quaternion SLERP if needed later.
+		Frame.Rotations.clear();
+		for (auto It = KfA->Pose.Rotations.constBegin(); It != KfA->Pose.Rotations.constEnd(); ++It)
+		{
+			if (!KfB->Pose.Rotations.contains(It.key()))
+			{
+				Frame.Rotations[It.key()] = It.value();
+				continue;
+			}
+
+			// Delta = R_B * R_A^-1 = R_B * transpose(R_A)
+			const lcMatrix33 RDelta = lcMul(KfB->Pose.Rotations.value(It.key()), lcMatrix33Transpose(It.value()));
+			const lcVector4 QDelta = lcMatrix33ToQuaternion(RDelta);
+			const lcVector4 AxisAngle = lcQuaternionToAxisAngle(QDelta);
+			const float InterpAngle = AxisAngle[3] * eased;
+			const lcVector4 InterpQ = lcQuaternionFromAxisAngle(lcVector4(AxisAngle[0], AxisAngle[1], AxisAngle[2], InterpAngle));
+			const lcMatrix33 InterpRDelta = lcQuaternionToMatrix33(InterpQ);
+			Frame.Rotations[It.key()] = lcMul(InterpRDelta, It.value());
+		}
+		for (auto It = KfB->Pose.Rotations.constBegin(); It != KfB->Pose.Rotations.constEnd(); ++It)
+		{
+			if (!Frame.Rotations.contains(It.key()))
+				Frame.Rotations[It.key()] = It.value();
+		}
+
+		// Interpolate camera
+		if (KfA->Pose.HasCamera && KfB->Pose.HasCamera)
+		{
+			Frame.CameraPosition = lcLerp(KfA->Pose.CameraPosition, KfB->Pose.CameraPosition, eased);
+			Frame.CameraTarget = lcLerp(KfA->Pose.CameraTarget, KfB->Pose.CameraTarget, eased);
+			Frame.CameraUpVector = lcLerp(KfA->Pose.CameraUpVector, KfB->Pose.CameraUpVector, eased);
+			Frame.HasCamera = true;
+		}
+		else if (KfA->Pose.HasCamera)
+		{
+			Frame.CameraPosition = KfA->Pose.CameraPosition;
+			Frame.CameraTarget = KfA->Pose.CameraTarget;
+			Frame.CameraUpVector = KfA->Pose.CameraUpVector;
+			Frame.HasCamera = true;
+		}
+		else if (KfB->Pose.HasCamera)
+		{
+			Frame.CameraPosition = KfB->Pose.CameraPosition;
+			Frame.CameraTarget = KfB->Pose.CameraTarget;
+			Frame.CameraUpVector = KfB->Pose.CameraUpVector;
+			Frame.HasCamera = true;
+		}
+	}
+}
+
+void lcAnimateWidget::AddKeyframeClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	lcAnimateDocumentState& State = GetState(Model);
+
+	lcKeyframePoint Pt;
+	Pt.Time = State.CurrentFrameIndex;
+	Pt.Pose.Positions.clear();
+	Pt.Pose.Rotations.clear();
+
+	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+	{
+		Pt.Pose.Positions[Piece.get()] = Piece->GetPosition();
+		Pt.Pose.Rotations[Piece.get()] = Piece->GetRotation();
+	}
+
+	if (lcView* View = gMainWindow->GetActiveView())
+	{
+		if (lcCamera* Camera = View->GetCamera())
+		{
+			Pt.Pose.CameraPosition = Camera->GetPosition();
+			Pt.Pose.CameraTarget = Camera->GetTargetPosition();
+			Pt.Pose.CameraUpVector = Camera->GetUpVector();
+			Pt.Pose.HasCamera = true;
+		}
+	}
+
+	State.Keyframes.push_back(Pt);
+	BakeKeyframes(Model, State);
+	RefreshFilmstrip(Model);
+	mTimelineWidget->SetFrameRange(0, std::max((int)State.Frames.size(), 10));
+	mTimelineWidget->update();
+	Update();
+}
+
+void lcAnimateWidget::DeleteKeyframeClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	lcAnimateDocumentState& State = GetState(Model);
+	const int Sel = mTimelineWidget->GetSelectedKeyframe();
+
+	if (Sel < 0 || Sel >= (int)State.Keyframes.size())
+		return;
+
+	State.Keyframes.erase(State.Keyframes.begin() + Sel);
+
+	if (State.Keyframes.size() < 2)
+	{
+		State.Frames.clear();
+	}
+	else
+	{
+		BakeKeyframes(Model, State);
+	}
+
+	RefreshFilmstrip(Model);
+	mTimelineWidget->update();
+	Update();
+}
+
+void lcAnimateWidget::EasingChanged(int Index)
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	lcAnimateDocumentState& State = GetState(Model);
+	const int Seg = mTimelineWidget->GetSelectedSegment();
+
+	if (Seg < 0 || Seg >= (int)State.Keyframes.size() - 1)
+		return;
+
+	State.Keyframes[Seg].SegmentEasing = static_cast<lcEasingType>(qBound(0, Index, 3));
+	BakeKeyframes(Model, State);
+	RefreshFilmstrip(Model);
+	mTimelineWidget->update();
+	Update();
+}
+
+void lcAnimateWidget::TimelineKeyframeSelected(int Index)
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	lcAnimateDocumentState& State = GetState(Model);
+
+	if (Index >= 0 && Index < (int)State.Keyframes.size())
+	{
+		State.CurrentFrameIndex = State.Keyframes[Index].Time;
+		mEasingCombo->setCurrentIndex(static_cast<int>(State.Keyframes[Index].SegmentEasing));
+		ApplyFrame(Model, State.CurrentFrameIndex);
+		mTimelineWidget->SetCurrentTime(State.CurrentFrameIndex);
+		Update();
+	}
 }
 
 void lcAnimateWidget::ExportClicked()

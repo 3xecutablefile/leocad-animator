@@ -783,6 +783,11 @@ inline lcVector3 lcLinearToSRGB(const lcVector3& Color)
 	return lcVector3(r, g, b);
 }
 
+inline lcVector3 lcLerp(const lcVector3& a, const lcVector3& b, float t)
+{
+	return lcVector3(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t);
+}
+
 inline lcVector3 lcMul(const lcVector3& a, const lcMatrix33& b)
 {
 	return b.r[0] * a[0] + b.r[1] * a[1] + b.r[2] * a[2];
@@ -1591,6 +1596,54 @@ inline lcVector4 lcQuaternionMultiply(const lcVector4& a, const lcVector4& b)
 	const float w = -a[0] * b[0] - a[1] * b[1] - a[2] * b[2] + a[3] * b[3];
 
 	return lcVector4(x, y, z, w);
+}
+
+inline lcVector4 lcMatrix33ToQuaternion(const lcMatrix33& m)
+{
+	const float trace = m.r[0].x + m.r[1].y + m.r[2].z;
+
+	if (trace > 0.0f)
+	{
+		const float s = 2.0f * sqrtf(1.0f + trace);
+		return lcVector4((m.r[1].z - m.r[2].y) / s, (m.r[2].x - m.r[0].z) / s, (m.r[0].y - m.r[1].x) / s, s / 4.0f);
+	}
+	else if (m.r[0].x > m.r[1].y && m.r[0].x > m.r[2].z)
+	{
+		const float s = 2.0f * sqrtf(1.0f + m.r[0].x - m.r[1].y - m.r[2].z);
+		return lcVector4(s / 4.0f, (m.r[0].y + m.r[1].x) / s, (m.r[2].x + m.r[0].z) / s, (m.r[1].z - m.r[2].y) / s);
+	}
+	else if (m.r[1].y > m.r[2].z)
+	{
+		const float s = 2.0f * sqrtf(1.0f + m.r[1].y - m.r[0].x - m.r[2].z);
+		return lcVector4((m.r[0].y + m.r[1].x) / s, s / 4.0f, (m.r[1].z + m.r[2].y) / s, (m.r[2].x - m.r[0].z) / s);
+	}
+	else
+	{
+		const float s = 2.0f * sqrtf(1.0f + m.r[2].z - m.r[0].x - m.r[1].y);
+		return lcVector4((m.r[2].x + m.r[0].z) / s, (m.r[1].z + m.r[2].y) / s, s / 4.0f, (m.r[0].y - m.r[1].x) / s);
+	}
+}
+
+inline lcMatrix33 lcQuaternionToMatrix33(const lcVector4& q)
+{
+	const float tx = 2.0f * q[0];
+	const float ty = 2.0f * q[1];
+	const float tz = 2.0f * q[2];
+	const float twx = tx * q[3];
+	const float twy = ty * q[3];
+	const float twz = tz * q[3];
+	const float txx = tx * q[0];
+	const float txy = ty * q[0];
+	const float txz = tz * q[0];
+	const float tyy = ty * q[1];
+	const float tyz = tz * q[1];
+	const float tzz = tz * q[2];
+
+	return lcMatrix33(
+		lcVector3(1.0f - (tyy + tzz), txy + twz, txz - twy),
+		lcVector3(txy - twz, 1.0f - (txx + tzz), tyz + twx),
+		lcVector3(txz + twy, tyz - twx, 1.0f - (txx + tyy))
+	);
 }
 
 inline lcVector3 lcQuaternionMul(const lcVector3& a, const lcVector4& b)
