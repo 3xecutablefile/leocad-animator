@@ -37,6 +37,10 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	QHBoxLayout* ControlLayout = new QHBoxLayout;
 
 	QVBoxLayout* OnionLayout = new QVBoxLayout;
+	mSocketModeCheck = new QCheckBox(tr("Socket Mode"), this);
+	mSocketModeCheck->setChecked(true);
+	mSocketModeCheck->setToolTip(tr("On: limbs can only rotate, so arms/legs stay attached to their sockets while posing. Off (Free Move): pieces can be dragged and detached, e.g. to pull an arm out of its socket for one frame."));
+	OnionLayout->addWidget(mSocketModeCheck);
 	mOnionSkinCheck = new QCheckBox(tr("Onion Skin"), this);
 	mOnionSkinCheck->setToolTip(tr("Show a small reference image of the previous frame so you can see how far to move things"));
 	mOnionSkinPreview = new QLabel(tr("Onion skin off"), this);
@@ -116,6 +120,9 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(mOnionSkinCheck, &QCheckBox::toggled, this, &lcAnimateWidget::OnionSkinToggled);
 	connect(mExportButton, &QPushButton::clicked, this, &lcAnimateWidget::ExportClicked);
 	connect(mFilmstrip, &QListWidget::currentRowChanged, this, &lcAnimateWidget::FilmstripItemChanged);
+	connect(mSocketModeCheck, &QCheckBox::toggled, this, &lcAnimateWidget::SocketModeToggled);
+
+	SocketModeToggled(mSocketModeCheck->isChecked());
 }
 
 void lcAnimateWidget::EnsureInitialized(lcModel* Model)
@@ -404,6 +411,17 @@ void lcAnimateWidget::OnionSkinToggled(bool)
 
 	if (Model)
 		RefreshOnionSkin(Model);
+}
+
+void lcAnimateWidget::SocketModeToggled(bool Checked)
+{
+	// Socket Mode disables the Move tool so limbs can only be rotated (staying attached to their
+	// shoulder/hip socket); Free Move re-enables it so a piece can be dragged out of its socket
+	// entirely, e.g. for a "the arm falls off" frame.
+	gMainWindow->mActions[LC_EDIT_ACTION_MOVE]->setEnabled(!Checked);
+
+	if (Checked && gMainWindow->GetTool() == lcTool::Move)
+		gMainWindow->SetTool(lcTool::Rotate);
 }
 
 void lcAnimateWidget::ExportClicked()

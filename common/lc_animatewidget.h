@@ -42,6 +42,7 @@ public slots:
 	void Timeout();
 	void OnionSkinToggled(bool Checked);
 	void ExportClicked();
+	void SocketModeToggled(bool Checked);
 
 protected:
 	void EnsureInitialized(lcModel* Model);
@@ -52,6 +53,7 @@ protected:
 	void RefreshOnionSkin(lcModel* Model);
 
 	QListWidget* mFilmstrip;
+	QCheckBox* mSocketModeCheck;
 	QCheckBox* mOnionSkinCheck;
 	QLabel* mOnionSkinPreview;
 	QPushButton* mCaptureButton;
