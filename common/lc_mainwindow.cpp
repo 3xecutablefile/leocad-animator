@@ -5,6 +5,7 @@
 #include "lc_partselectionwidget.h"
 #include "lc_propertieswidget.h"
 #include "lc_timelinewidget.h"
+#include "lc_animatewidget.h"
 #include "lc_viewwidget.h"
 #include "lc_colorlist.h"
 #include "lc_qutils.h"
@@ -549,6 +550,7 @@ void lcMainWindow::CreateMenus()
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_PROPERTIES]);
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_TIMELINE]);
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_PREVIEW]);
+	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_ANIMATE]);
 	ToolBarsMenu->addSeparator();
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_STANDARD]);
 	ToolBarsMenu->addAction(mActions[LC_VIEW_TOOLBAR_TOOLS]);
@@ -793,6 +795,14 @@ void lcMainWindow::CreateToolBars()
 	mTimelineToolBar->setWidget(mTimelineWidget);
 	addDockWidget(Qt::RightDockWidgetArea, mTimelineToolBar);
 
+	mAnimateToolBar = new QDockWidget(tr("Animate"), this);
+	mAnimateToolBar->setObjectName("AnimateToolbar");
+
+	mAnimateWidget = new lcAnimateWidget(mAnimateToolBar);
+
+	mAnimateToolBar->setWidget(mAnimateWidget);
+	addDockWidget(Qt::BottomDockWidgetArea, mAnimateToolBar);
+
 	CreatePreviewWidget();
 
 	tabifyDockWidget(mPartsToolBar, mPropertiesToolBar);
@@ -801,6 +811,7 @@ void lcMainWindow::CreateToolBars()
 
 	connect(mPropertiesToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 	connect(mTimelineToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
+	connect(mAnimateToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 	connect(mPartsToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 	connect(mColorsToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 
@@ -992,6 +1003,7 @@ QMenu* lcMainWindow::createPopupMenu()
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_PROPERTIES]);
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_TIMELINE]);
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_PREVIEW]);
+	Menu->addAction(mActions[LC_VIEW_TOOLBAR_ANIMATE]);
 	Menu->addSeparator();
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_STANDARD]);
 	Menu->addAction(mActions[LC_VIEW_TOOLBAR_TOOLS]);
@@ -1006,6 +1018,7 @@ void lcMainWindow::UpdateDockWidgetActions()
 	mActions[LC_VIEW_TOOLBAR_COLORS]->setChecked(mColorsToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_PROPERTIES]->setChecked(mPropertiesToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_TIMELINE]->setChecked(mTimelineToolBar->isVisible());
+	mActions[LC_VIEW_TOOLBAR_ANIMATE]->setChecked(mAnimateToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_STANDARD]->setChecked(mStandardToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_TOOLS]->setChecked(mToolsToolBar->isVisible());
 	mActions[LC_VIEW_TOOLBAR_TIME]->setChecked(mTimeToolBar->isVisible());
@@ -2091,6 +2104,7 @@ void lcMainWindow::UpdateSelectedObjects(bool SelectionChanged)
 	}
 
 	mPropertiesWidget->Update(Selection, Focus);
+	mAnimateWidget->SetSelection(Selection);
 
 	if (Focus && Focus->IsPiece())
 	{
@@ -2159,6 +2173,8 @@ void lcMainWindow::UpdateCurrentStep()
 	mActions[LC_VIEW_TIME_LAST]->setEnabled(CurrentStep != LastStep);
 
 	mStatusTimeLabel->setText(QString(tr("Step %1")).arg(QString::number(CurrentStep)));
+
+	mAnimateWidget->Update();
 }
 
 void lcMainWindow::SetAddKeys(bool AddKeys)
@@ -2914,6 +2930,10 @@ void lcMainWindow::HandleCommand(lcCommandId CommandId)
 
 	case LC_VIEW_TOOLBAR_TIMELINE:
 		ToggleDockWidget(mTimelineToolBar);
+		break;
+
+	case LC_VIEW_TOOLBAR_ANIMATE:
+		ToggleDockWidget(mAnimateToolBar);
 		break;
 
 	case LC_VIEW_TOOLBAR_PREVIEW:
