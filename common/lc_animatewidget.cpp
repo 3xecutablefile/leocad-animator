@@ -11,6 +11,22 @@
 static const int THUMBNAIL_WIDTH = 96;
 static const int THUMBNAIL_HEIGHT = 72;
 
+void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame)
+{
+	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+	{
+		const QString& ID = Piece->GetID();
+
+		if (Frame.Positions.contains(ID))
+			Piece->SetPosition(Frame.Positions.value(ID), 1, false);
+
+		if (Frame.Rotations.contains(ID))
+			Piece->SetRotation(Frame.Rotations.value(ID), 1, false);
+
+		Piece->UpdatePosition(1);
+	}
+}
+
 lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	: QWidget(Parent)
 {
@@ -34,7 +50,7 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	ControlLayout->addStretch();
 
 	mCaptureButton = new QPushButton(tr("●  Capture Frame"), this);
-	mCaptureButton->setToolTip(tr("Insert a new frame after the current one and snapshot every piece's position and rotation, like pressing the shutter on a stop-motion camera"));
+	mCaptureButton->setToolTip(tr("Snapshot every piece's position and rotation into a new frame, like pressing the shutter on a stop-motion camera"));
 	QFont CaptureFont = mCaptureButton->font();
 	CaptureFont.setPointSize(CaptureFont.pointSize() + 4);
 	CaptureFont.setBold(true);
@@ -102,14 +118,59 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(mFilmstrip, &QListWidget::currentRowChanged, this, &lcAnimateWidget::FilmstripItemChanged);
 }
 
-QIcon lcAnimateWidget::RenderStepThumbnail(lcModel* Model, quint32 Step, int Width, int Height)
+void lcAnimateWidget::EnsureInitialized(lcModel* Model)
 {
+	// ponytail: one animation history per dock, not per document - switching to a different open
+	// model tab resets it. Fine for the single-document workflow this is built for; multi-document
+	// support would need frames stored on the model itself, not here.
+	if (mInitialized && mLastModel == Model)
+		return;
+
+	mFrames.clear();
+	mFrames.push_back(SnapshotFrame(Model));
+	mCurrentFrameIndex = 0;
+	mThumbnailCache.clear();
+	mLastModel = Model;
+	mInitialized = true;
+}
+
+lcAnimateFrame lcAnimateWidget::SnapshotFrame(lcModel* Model) const
+{
+	lcAnimateFrame Frame;
+
+	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+	{
+		Frame.Positions[Piece->GetID()] = Piece->GetPosition();
+		Frame.Rotations[Piece->GetID()] = Piece->GetRotation();
+	}
+
+	return Frame;
+}
+
+void lcAnimateWidget::ApplyFrame(lcModel* Model, int FrameIndex)
+{
+	if (FrameIndex < 0 || FrameIndex >= static_cast<int>(mFrames.size()))
+		return;
+
+	lcPoseAnimateFrame(Model, mFrames[FrameIndex]);
+	Model->SetCurrentStep(1); // redraws the live viewport and refreshes the rest of the UI
+}
+
+QIcon lcAnimateWidget::RenderFrameThumbnail(lcModel* Model, int FrameIndex, int Width, int Height)
+{
+	if (FrameIndex < 0 || FrameIndex >= static_cast<int>(mFrames.size()))
+		return QIcon();
+
+	// Poses pieces directly without going through SetCurrentStep, so this doesn't touch the live
+	// viewport - the caller is responsible for restoring the real current frame afterward.
+	lcPoseAnimateFrame(Model, mFrames[FrameIndex]);
+
 	lcView View(lcViewType::View, Model);
 	View.SetOffscreenContext();
 	View.MakeCurrent();
 	View.SetSize(Width, Height);
 
-	std::vector<QImage> Images = View.GetStepImages(Step, Step);
+	std::vector<QImage> Images = View.GetStepImages(1, 1);
 
 	if (Images.empty())
 		return QIcon();
@@ -119,26 +180,31 @@ QIcon lcAnimateWidget::RenderStepThumbnail(lcModel* Model, quint32 Step, int Wid
 
 void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 {
-	const lcStep CurrentStep = Model->GetCurrentStep();
-	const lcStep LastStep = mFrameCount;
-
 	mIgnoreUpdates = true;
 	mFilmstrip->clear();
 
-	for (lcStep Step = 1; Step <= LastStep; Step++)
+	bool NeedsViewportRestore = false;
+
+	for (int Index = 0; Index < static_cast<int>(mFrames.size()); Index++)
 	{
-		QIcon Icon = mThumbnailCache.value(static_cast<int>(Step));
+		QIcon Icon = mThumbnailCache.value(Index);
 
 		if (Icon.isNull())
 		{
-			Icon = RenderStepThumbnail(Model, Step, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
-			mThumbnailCache.insert(static_cast<int>(Step), Icon);
+			Icon = RenderFrameThumbnail(Model, Index, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+			mThumbnailCache.insert(Index, Icon);
+			NeedsViewportRestore = true;
 		}
 
-		mFilmstrip->addItem(new QListWidgetItem(Icon, QString::number(Step)));
+		mFilmstrip->addItem(new QListWidgetItem(Icon, QString::number(Index + 1)));
 	}
 
-	mFilmstrip->setCurrentRow(static_cast<int>(CurrentStep) - 1);
+	// Rendering thumbnails above may have posed pieces as other frames - restore the real current
+	// frame once at the end instead of after every single thumbnail (avoids viewport flicker).
+	if (NeedsViewportRestore)
+		ApplyFrame(Model, mCurrentFrameIndex);
+
+	mFilmstrip->setCurrentRow(mCurrentFrameIndex);
 	mIgnoreUpdates = false;
 }
 
@@ -151,21 +217,22 @@ void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 		return;
 	}
 
-	const lcStep CurrentStep = Model->GetCurrentStep();
-
-	if (CurrentStep <= 1)
+	if (mCurrentFrameIndex <= 0)
 	{
 		mOnionSkinPreview->setPixmap(QPixmap());
 		mOnionSkinPreview->setText(tr("No previous frame"));
 		return;
 	}
 
-	// Reuse the filmstrip's cached thumbnail instead of spinning up another offscreen GL render -
-	// one less place for context churn to go wrong, and it's already sitting there.
-	QIcon Icon = mThumbnailCache.value(static_cast<int>(CurrentStep - 1));
+	const int PreviousIndex = mCurrentFrameIndex - 1;
+	QIcon Icon = mThumbnailCache.value(PreviousIndex);
 
 	if (Icon.isNull())
-		Icon = RenderStepThumbnail(Model, CurrentStep - 1, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+	{
+		Icon = RenderFrameThumbnail(Model, PreviousIndex, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+		mThumbnailCache.insert(PreviousIndex, Icon);
+		ApplyFrame(Model, mCurrentFrameIndex);
+	}
 
 	mOnionSkinPreview->setText(QString());
 	mOnionSkinPreview->setPixmap(Icon.pixmap(120, 90));
@@ -178,31 +245,22 @@ void lcAnimateWidget::Update()
 	if (!Model)
 		return;
 
-	const lcStep CurrentStep = Model->GetCurrentStep();
+	EnsureInitialized(Model);
 
-	// Self-heal upward only: if we're sitting on a step further out than what we think the frame
-	// count is (e.g. a freshly loaded document), adopt it. Never shrink just because the user
-	// navigated to an earlier frame - that's not the same as the animation getting shorter.
-	mFrameCount = qMax(mFrameCount, CurrentStep);
-	const lcStep LastStep = mFrameCount;
+	const int FrameCount = static_cast<int>(mFrames.size());
 
-	mFrameLabel->setText(tr("Frame %1 / %2").arg(CurrentStep).arg(LastStep));
-	mDeleteButton->setEnabled(LastStep > 1);
+	mFrameLabel->setText(tr("Frame %1 / %2").arg(mCurrentFrameIndex + 1).arg(FrameCount));
+	mDeleteButton->setEnabled(FrameCount > 1);
 
-	// ponytail: only re-render filmstrip thumbnails (offscreen GL) when the frame count actually
-	// changed. Doing this on every step change was stealing the GL context out from under the live
-	// viewport on every single Play tick, so the 3D view never visibly updated during playback.
-	if (mFilmstrip->count() != static_cast<int>(LastStep))
+	if (mFilmstrip->count() != FrameCount)
 		RefreshFilmstrip(Model);
 	else
 	{
 		mIgnoreUpdates = true;
-		mFilmstrip->setCurrentRow(static_cast<int>(CurrentStep) - 1);
+		mFilmstrip->setCurrentRow(mCurrentFrameIndex);
 		mIgnoreUpdates = false;
 	}
 
-	// Onion skin is a posing aid, not a playback aid, and rendering it is the same GL-context
-	// hazard, so skip it while actively playing.
 	if (!mPlayTimer->isActive())
 		RefreshOnionSkin(Model);
 }
@@ -214,8 +272,12 @@ void lcAnimateWidget::FilmstripItemChanged(int Row)
 
 	lcModel* Model = lcGetActiveModel();
 
-	if (Model)
-		Model->SetCurrentStep(static_cast<lcStep>(Row + 1));
+	if (!Model)
+		return;
+
+	mCurrentFrameIndex = Row;
+	ApplyFrame(Model, mCurrentFrameIndex);
+	Update();
 }
 
 void lcAnimateWidget::CaptureClicked()
@@ -225,30 +287,10 @@ void lcAnimateWidget::CaptureClicked()
 	if (!Model)
 		return;
 
-	Model->InsertStepAction(Model->GetCurrentStep() + 1);
-	Model->ShowNextStep();
-	mFrameCount++;
+	EnsureInitialized(Model);
 
-	std::vector<lcObject*> Pieces;
-
-	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
-		Pieces.push_back(Piece.get());
-
-	if (!Pieces.empty())
-	{
-		static const lcObjectPropertyId Properties[] =
-		{
-			lcObjectPropertyId::ObjectPositionX,
-			lcObjectPropertyId::ObjectPositionY,
-			lcObjectPropertyId::ObjectPositionZ,
-			lcObjectPropertyId::ObjectRotationX,
-			lcObjectPropertyId::ObjectRotationY,
-			lcObjectPropertyId::ObjectRotationZ
-		};
-
-		for (lcObjectPropertyId PropertyId : Properties)
-			Model->SetObjectsKeyFrame(Pieces, PropertyId, true);
-	}
+	mFrames.insert(mFrames.begin() + mCurrentFrameIndex + 1, SnapshotFrame(Model));
+	mCurrentFrameIndex++;
 
 	mThumbnailCache.clear();
 	Update();
@@ -261,11 +303,13 @@ void lcAnimateWidget::DuplicateClicked()
 	if (!Model)
 		return;
 
-	Model->InsertStepAction(Model->GetCurrentStep() + 1);
-	Model->ShowNextStep();
-	mFrameCount++;
+	EnsureInitialized(Model);
+
+	mFrames.insert(mFrames.begin() + mCurrentFrameIndex + 1, mFrames[mCurrentFrameIndex]);
+	mCurrentFrameIndex++;
 
 	mThumbnailCache.clear();
+	ApplyFrame(Model, mCurrentFrameIndex);
 	Update();
 }
 
@@ -273,19 +317,16 @@ void lcAnimateWidget::DeleteClicked()
 {
 	lcModel* Model = lcGetActiveModel();
 
-	if (!Model || mFrameCount <= 1)
+	if (!Model || mFrames.size() <= 1)
 		return;
 
-	Model->RemoveStepAction(Model->GetCurrentStep());
-	mFrameCount--;
+	mFrames.erase(mFrames.begin() + mCurrentFrameIndex);
 
-	// RemoveStepAction doesn't clamp CurrentStep, so deleting the last frame while sitting on it
-	// leaves CurrentStep pointing past the new end - which then tricks Update()'s "never shrink
-	// the frame count below CurrentStep" self-heal into silently undoing this decrement.
-	if (Model->GetCurrentStep() > mFrameCount)
-		Model->SetCurrentStep(mFrameCount);
+	if (mCurrentFrameIndex >= static_cast<int>(mFrames.size()))
+		mCurrentFrameIndex = static_cast<int>(mFrames.size()) - 1;
 
 	mThumbnailCache.clear();
+	ApplyFrame(Model, mCurrentFrameIndex);
 	Update();
 }
 
@@ -309,8 +350,13 @@ void lcAnimateWidget::PlayPauseClicked()
 	if (!Model)
 		return;
 
-	if (Model->GetCurrentStep() >= mFrameCount)
-		Model->SetCurrentStep(1);
+	EnsureInitialized(Model);
+
+	if (mCurrentFrameIndex >= static_cast<int>(mFrames.size()) - 1)
+	{
+		mCurrentFrameIndex = 0;
+		ApplyFrame(Model, mCurrentFrameIndex);
+	}
 
 	mPlayTimer->start(1000 / mFpsSpinBox->value());
 	mPlayButton->setText(tr("Pause"));
@@ -327,10 +373,13 @@ void lcAnimateWidget::Timeout()
 		return;
 	}
 
-	if (Model->GetCurrentStep() >= mFrameCount)
-		Model->SetCurrentStep(1);
+	if (mCurrentFrameIndex >= static_cast<int>(mFrames.size()) - 1)
+		mCurrentFrameIndex = 0;
 	else
-		Model->ShowNextStep();
+		mCurrentFrameIndex++;
+
+	ApplyFrame(Model, mCurrentFrameIndex);
+	Update();
 }
 
 void lcAnimateWidget::OnionSkinToggled(bool)
@@ -348,6 +397,12 @@ void lcAnimateWidget::ExportClicked()
 	if (!Model)
 		return;
 
-	lcAnimateExportDialog Dialog(this, Model, mFpsSpinBox->value(), static_cast<int>(mFrameCount));
+	EnsureInitialized(Model);
+
+	lcAnimateExportDialog Dialog(this, Model, mFpsSpinBox->value(), mFrames);
 	Dialog.exec();
+
+	// Exporting poses pieces as each exported frame; make sure the viewport reflects the frame
+	// we're actually parked on once the dialog closes.
+	ApplyFrame(Model, mCurrentFrameIndex);
 }

@@ -1,13 +1,12 @@
 #include "lc_global.h"
 #include "lc_ffmpegargs.h"
 
-QStringList lcBuildFfmpegAnimationArguments(const QString& InputPattern, int Fps, int StartNumber, const QString& OutputFile, bool IsGif)
+QStringList lcBuildFfmpegAnimationArguments(const QString& InputPattern, int Fps, const QString& OutputFile, bool IsGif)
 {
 	QStringList Arguments;
 
 	Arguments << QLatin1String("-y")
 	          << QLatin1String("-framerate") << QString::number(Fps)
-	          << QLatin1String("-start_number") << QString::number(StartNumber)
 	          << QLatin1String("-i") << InputPattern;
 
 	if (IsGif)
