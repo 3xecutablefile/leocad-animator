@@ -3,8 +3,13 @@
 #include "lc_animateexportdialog.h"
 #include "lc_model.h"
 #include "lc_mainwindow.h"
+#include "lc_view.h"
 #include "project.h"
 #include "object.h"
+#include "piece.h"
+
+static const int THUMBNAIL_WIDTH = 96;
+static const int THUMBNAIL_HEIGHT = 72;
 
 lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	: QWidget(Parent)
@@ -12,57 +17,152 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	QVBoxLayout* MainLayout = new QVBoxLayout(this);
 	MainLayout->setContentsMargins(4, 4, 4, 4);
 
-	QHBoxLayout* SliderLayout = new QHBoxLayout;
-	mFrameSlider = new QSlider(Qt::Horizontal, this);
-	mFrameSlider->setMinimum(1);
-	mFrameSlider->setMaximum(1);
-	mFrameLabel = new QLabel(tr("Frame 1 / 1"), this);
-	mFrameLabel->setMinimumWidth(90);
-	SliderLayout->addWidget(mFrameSlider);
-	SliderLayout->addWidget(mFrameLabel);
-	MainLayout->addLayout(SliderLayout);
+	// Row 1: onion skin preview | big capture button | play/fps
+	QHBoxLayout* ControlLayout = new QHBoxLayout;
 
-	QHBoxLayout* ButtonLayout = new QHBoxLayout;
+	QVBoxLayout* OnionLayout = new QVBoxLayout;
+	mOnionSkinCheck = new QCheckBox(tr("Onion Skin"), this);
+	mOnionSkinCheck->setToolTip(tr("Show a small reference image of the previous frame so you can see how far to move things"));
+	mOnionSkinPreview = new QLabel(tr("Onion skin off"), this);
+	mOnionSkinPreview->setFixedSize(120, 90);
+	mOnionSkinPreview->setAlignment(Qt::AlignCenter);
+	mOnionSkinPreview->setStyleSheet(QLatin1String("QLabel { border: 1px solid palette(mid); }"));
+	OnionLayout->addWidget(mOnionSkinCheck);
+	OnionLayout->addWidget(mOnionSkinPreview);
+	ControlLayout->addLayout(OnionLayout);
 
+	ControlLayout->addStretch();
+
+	mCaptureButton = new QPushButton(tr("●  Capture Frame"), this);
+	mCaptureButton->setToolTip(tr("Insert a new frame after the current one and snapshot every piece's position and rotation, like pressing the shutter on a stop-motion camera"));
+	QFont CaptureFont = mCaptureButton->font();
+	CaptureFont.setPointSize(CaptureFont.pointSize() + 4);
+	CaptureFont.setBold(true);
+	mCaptureButton->setFont(CaptureFont);
+	mCaptureButton->setMinimumSize(200, 64);
+	mCaptureButton->setStyleSheet(QLatin1String(
+		"QPushButton { border-radius: 32px; background-color: #d64545; color: white; }"
+		"QPushButton:hover { background-color: #e05a5a; }"
+		"QPushButton:pressed { background-color: #b83a3a; }"));
+	ControlLayout->addWidget(mCaptureButton);
+
+	ControlLayout->addStretch();
+
+	QVBoxLayout* PlayLayout = new QVBoxLayout;
+	QHBoxLayout* PlayRow = new QHBoxLayout;
 	mPlayButton = new QPushButton(tr("Play"), this);
-	ButtonLayout->addWidget(mPlayButton);
-
-	ButtonLayout->addWidget(new QLabel(tr("fps:"), this));
+	PlayRow->addWidget(mPlayButton);
+	PlayRow->addWidget(new QLabel(tr("fps:"), this));
 	mFpsSpinBox = new QSpinBox(this);
 	mFpsSpinBox->setRange(1, 60);
 	mFpsSpinBox->setValue(12);
-	ButtonLayout->addWidget(mFpsSpinBox);
+	PlayRow->addWidget(mFpsSpinBox);
+	PlayLayout->addLayout(PlayRow);
+	mFrameLabel = new QLabel(tr("Frame 1 / 1"), this);
+	PlayLayout->addWidget(mFrameLabel);
+	ControlLayout->addLayout(PlayLayout);
 
-	mRecordButton = new QToolButton(this);
-	mRecordButton->setText(tr("Record"));
-	mRecordButton->setCheckable(true);
-	mRecordButton->setToolTip(tr("When enabled, moving or rotating a piece adds a keyframe at the current frame instead of overwriting the previous one"));
-	ButtonLayout->addWidget(mRecordButton);
+	MainLayout->addLayout(ControlLayout);
 
-	QPushButton* NewFrameButton = new QPushButton(tr("+ Frame"), this);
-	NewFrameButton->setToolTip(tr("Insert a new blank frame after the current one"));
-	ButtonLayout->addWidget(NewFrameButton);
-
-	QPushButton* AddKeyframeButton = new QPushButton(tr("Add Keyframe"), this);
-	AddKeyframeButton->setToolTip(tr("Key the position and rotation of the selected pieces at the current frame"));
-	ButtonLayout->addWidget(AddKeyframeButton);
-
-	ButtonLayout->addStretch();
-
+	// Row 2: duplicate/delete/export
+	QHBoxLayout* ActionLayout = new QHBoxLayout;
+	QPushButton* DuplicateButton = new QPushButton(tr("Duplicate Frame"), this);
+	DuplicateButton->setToolTip(tr("Hold the current pose for one more frame, without capturing anything new"));
+	mDeleteButton = new QPushButton(tr("Delete Frame"), this);
+	ActionLayout->addWidget(DuplicateButton);
+	ActionLayout->addWidget(mDeleteButton);
+	ActionLayout->addStretch();
 	mExportButton = new QPushButton(tr("Export Animation..."), this);
-	ButtonLayout->addWidget(mExportButton);
+	ActionLayout->addWidget(mExportButton);
+	MainLayout->addLayout(ActionLayout);
 
-	MainLayout->addLayout(ButtonLayout);
+	// Row 3: frame filmstrip
+	mFilmstrip = new QListWidget(this);
+	mFilmstrip->setViewMode(QListView::IconMode);
+	mFilmstrip->setFlow(QListView::LeftToRight);
+	mFilmstrip->setWrapping(false);
+	mFilmstrip->setMovement(QListView::Static);
+	mFilmstrip->setIconSize(QSize(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT));
+	mFilmstrip->setFixedHeight(THUMBNAIL_HEIGHT + 40);
+	mFilmstrip->setResizeMode(QListView::Adjust);
+	mFilmstrip->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	mFilmstrip->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+	mFilmstrip->setSelectionMode(QAbstractItemView::SingleSelection);
+	MainLayout->addWidget(mFilmstrip);
 
 	mPlayTimer = new QTimer(this);
 	connect(mPlayTimer, &QTimer::timeout, this, &lcAnimateWidget::Timeout);
 
-	connect(mFrameSlider, &QSlider::valueChanged, this, &lcAnimateWidget::SliderChanged);
+	connect(mCaptureButton, &QPushButton::clicked, this, &lcAnimateWidget::CaptureClicked);
+	connect(DuplicateButton, &QPushButton::clicked, this, &lcAnimateWidget::DuplicateClicked);
+	connect(mDeleteButton, &QPushButton::clicked, this, &lcAnimateWidget::DeleteClicked);
 	connect(mPlayButton, &QPushButton::clicked, this, &lcAnimateWidget::PlayPauseClicked);
-	connect(mRecordButton, &QToolButton::toggled, this, &lcAnimateWidget::RecordToggled);
-	connect(NewFrameButton, &QPushButton::clicked, this, &lcAnimateWidget::NewFrameClicked);
-	connect(AddKeyframeButton, &QPushButton::clicked, this, &lcAnimateWidget::AddKeyframeClicked);
+	connect(mOnionSkinCheck, &QCheckBox::toggled, this, &lcAnimateWidget::OnionSkinToggled);
 	connect(mExportButton, &QPushButton::clicked, this, &lcAnimateWidget::ExportClicked);
+	connect(mFilmstrip, &QListWidget::currentRowChanged, this, &lcAnimateWidget::FilmstripItemChanged);
+}
+
+QIcon lcAnimateWidget::RenderStepThumbnail(lcModel* Model, quint32 Step, int Width, int Height)
+{
+	lcView View(lcViewType::View, Model);
+	View.SetOffscreenContext();
+	View.MakeCurrent();
+	View.SetSize(Width, Height);
+
+	std::vector<QImage> Images = View.GetStepImages(Step, Step);
+
+	if (Images.empty())
+		return QIcon();
+
+	return QIcon(QPixmap::fromImage(Images.front()));
+}
+
+void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
+{
+	const lcStep CurrentStep = Model->GetCurrentStep();
+	const lcStep LastStep = qMax(Model->GetLastStep(), CurrentStep);
+
+	mIgnoreUpdates = true;
+	mFilmstrip->clear();
+
+	for (lcStep Step = 1; Step <= LastStep; Step++)
+	{
+		QIcon Icon = mThumbnailCache.value(static_cast<int>(Step));
+
+		if (Icon.isNull())
+		{
+			Icon = RenderStepThumbnail(Model, Step, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+			mThumbnailCache.insert(static_cast<int>(Step), Icon);
+		}
+
+		mFilmstrip->addItem(new QListWidgetItem(Icon, QString::number(Step)));
+	}
+
+	mFilmstrip->setCurrentRow(static_cast<int>(CurrentStep) - 1);
+	mIgnoreUpdates = false;
+}
+
+void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
+{
+	if (!mOnionSkinCheck->isChecked())
+	{
+		mOnionSkinPreview->setPixmap(QPixmap());
+		mOnionSkinPreview->setText(tr("Onion skin off"));
+		return;
+	}
+
+	const lcStep CurrentStep = Model->GetCurrentStep();
+
+	if (CurrentStep <= 1)
+	{
+		mOnionSkinPreview->setPixmap(QPixmap());
+		mOnionSkinPreview->setText(tr("No previous frame"));
+		return;
+	}
+
+	const QIcon Icon = RenderStepThumbnail(Model, CurrentStep - 1, 120, 90);
+	mOnionSkinPreview->setText(QString());
+	mOnionSkinPreview->setPixmap(Icon.pixmap(120, 90));
 }
 
 void lcAnimateWidget::Update()
@@ -72,33 +172,87 @@ void lcAnimateWidget::Update()
 	if (!Model)
 		return;
 
-	mIgnoreUpdates = true;
-
 	const lcStep CurrentStep = Model->GetCurrentStep();
 	const lcStep LastStep = qMax(Model->GetLastStep(), CurrentStep);
 
-	mFrameSlider->setMaximum(static_cast<int>(LastStep));
-	mFrameSlider->setValue(static_cast<int>(CurrentStep));
 	mFrameLabel->setText(tr("Frame %1 / %2").arg(CurrentStep).arg(LastStep));
-	mRecordButton->setChecked(gMainWindow->GetAddKeys());
+	mDeleteButton->setEnabled(LastStep > 1);
 
-	mIgnoreUpdates = false;
+	RefreshFilmstrip(Model);
+	RefreshOnionSkin(Model);
 }
 
-void lcAnimateWidget::SetSelection(const std::vector<lcObject*>& Selection)
+void lcAnimateWidget::FilmstripItemChanged(int Row)
 {
-	mSelection = Selection;
-}
-
-void lcAnimateWidget::SliderChanged(int Value)
-{
-	if (mIgnoreUpdates)
+	if (mIgnoreUpdates || Row < 0)
 		return;
 
 	lcModel* Model = lcGetActiveModel();
 
 	if (Model)
-		Model->SetCurrentStep(static_cast<lcStep>(Value));
+		Model->SetCurrentStep(static_cast<lcStep>(Row + 1));
+}
+
+void lcAnimateWidget::CaptureClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+
+	if (!Model)
+		return;
+
+	Model->InsertStepAction(Model->GetCurrentStep() + 1);
+	Model->ShowNextStep();
+
+	std::vector<lcObject*> Pieces;
+
+	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+		Pieces.push_back(Piece.get());
+
+	if (!Pieces.empty())
+	{
+		static const lcObjectPropertyId Properties[] =
+		{
+			lcObjectPropertyId::ObjectPositionX,
+			lcObjectPropertyId::ObjectPositionY,
+			lcObjectPropertyId::ObjectPositionZ,
+			lcObjectPropertyId::ObjectRotationX,
+			lcObjectPropertyId::ObjectRotationY,
+			lcObjectPropertyId::ObjectRotationZ
+		};
+
+		for (lcObjectPropertyId PropertyId : Properties)
+			Model->SetObjectsKeyFrame(Pieces, PropertyId, true);
+	}
+
+	mThumbnailCache.clear();
+	Update();
+}
+
+void lcAnimateWidget::DuplicateClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+
+	if (!Model)
+		return;
+
+	Model->InsertStepAction(Model->GetCurrentStep() + 1);
+	Model->ShowNextStep();
+
+	mThumbnailCache.clear();
+	Update();
+}
+
+void lcAnimateWidget::DeleteClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+
+	if (!Model || Model->GetLastStep() <= 1)
+		return;
+
+	Model->RemoveStepAction(Model->GetCurrentStep());
+
+	mThumbnailCache.clear();
+	Update();
 }
 
 void lcAnimateWidget::PlayPauseClicked()
@@ -139,44 +293,12 @@ void lcAnimateWidget::Timeout()
 		Model->ShowNextStep();
 }
 
-void lcAnimateWidget::NewFrameClicked()
+void lcAnimateWidget::OnionSkinToggled(bool)
 {
 	lcModel* Model = lcGetActiveModel();
 
-	if (!Model)
-		return;
-
-	Model->InsertStepAction(Model->GetCurrentStep() + 1);
-	Model->ShowNextStep();
-}
-
-void lcAnimateWidget::AddKeyframeClicked()
-{
-	lcModel* Model = lcGetActiveModel();
-
-	if (!Model || mSelection.empty())
-		return;
-
-	static const lcObjectPropertyId Properties[] =
-	{
-		lcObjectPropertyId::ObjectPositionX,
-		lcObjectPropertyId::ObjectPositionY,
-		lcObjectPropertyId::ObjectPositionZ,
-		lcObjectPropertyId::ObjectRotationX,
-		lcObjectPropertyId::ObjectRotationY,
-		lcObjectPropertyId::ObjectRotationZ
-	};
-
-	for (lcObjectPropertyId PropertyId : Properties)
-		Model->SetObjectsKeyFrame(mSelection, PropertyId, true);
-}
-
-void lcAnimateWidget::RecordToggled(bool Checked)
-{
-	if (mIgnoreUpdates)
-		return;
-
-	gMainWindow->SetAddKeys(Checked);
+	if (Model)
+		RefreshOnionSkin(Model);
 }
 
 void lcAnimateWidget::ExportClicked()

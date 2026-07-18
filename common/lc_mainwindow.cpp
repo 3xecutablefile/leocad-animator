@@ -2104,7 +2104,6 @@ void lcMainWindow::UpdateSelectedObjects(bool SelectionChanged)
 	}
 
 	mPropertiesWidget->Update(Selection, Focus);
-	mAnimateWidget->SetSelection(Selection);
 
 	if (Focus && Focus->IsPiece())
 	{
