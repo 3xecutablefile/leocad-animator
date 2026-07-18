@@ -849,16 +849,22 @@ void lcAnimateWidget::WalkCycleClicked()
 			OtherPieces.push_back(Piece.get());
 	}
 
+	if (RightLegPieces.empty() || LeftLegPieces.empty())
+	{
+		QMessageBox::information(this, tr("Walk Cycle"), tr("This minifig's Right Leg or Left Leg group has no pieces left in it."));
+		return;
+	}
+
 	bool Ok = false;
-	const int Steps = QInputDialog::getInt(this, tr("Walk Cycle"), tr("Number of steps (each step is one captured frame):"), 8, 2, 64, 1, &Ok);
+	const int Steps = QInputDialog::getInt(this, tr("Walk Cycle"), tr("Number of frames for one full stride cycle (right forward - passing - right back - passing):"), 8, 4, 64, 1, &Ok);
 	if (!Ok)
 		return;
 
-	const double StrideAngle = QInputDialog::getDouble(this, tr("Walk Cycle"), tr("Stride angle (degrees each leg swings forward/back from the current pose):"), 25.0, 1.0, 60.0, 1, &Ok);
+	const double StrideAngle = QInputDialog::getDouble(this, tr("Walk Cycle"), tr("Stride angle (degrees each leg swings forward/back from the current pose at its peak):"), 25.0, 1.0, 60.0, 1, &Ok);
 	if (!Ok)
 		return;
 
-	const double StepDistance = QInputDialog::getDouble(this, tr("Walk Cycle"), tr("Distance to move forward per step (LDraw units - use a negative number if the figure ends up walking backward):"), 20.0, -500.0, 500.0, 1, &Ok);
+	const double StepDistance = QInputDialog::getDouble(this, tr("Walk Cycle"), tr("Distance to move forward per frame (LDraw units - use a negative number if the figure ends up walking backward):"), 20.0, -500.0, 500.0, 1, &Ok);
 	if (!Ok)
 		return;
 
@@ -870,29 +876,12 @@ void lcAnimateWidget::WalkCycleClicked()
 	Wizard->SetPieceInfo(LC_MFW_RLEG, RightLegPieces.front()->mPieceInfo);
 	Wizard->SetAngle(LC_MFW_RLEG, 0.0f);
 	const lcMatrix44 RLegNeutral = Wizard->mMinifig.Matrices[LC_MFW_RLEG];
-	Wizard->SetAngle(LC_MFW_RLEG, static_cast<float>(StrideAngle));
-	const lcMatrix44 RLegForward = Wizard->mMinifig.Matrices[LC_MFW_RLEG];
-	Wizard->SetAngle(LC_MFW_RLEG, static_cast<float>(-StrideAngle));
-	const lcMatrix44 RLegBack = Wizard->mMinifig.Matrices[LC_MFW_RLEG];
+	const lcMatrix44 RLegNeutralInv = lcMatrix44AffineInverse(RLegNeutral);
 
 	Wizard->SetPieceInfo(LC_MFW_LLEG, LeftLegPieces.front()->mPieceInfo);
 	Wizard->SetAngle(LC_MFW_LLEG, 0.0f);
 	const lcMatrix44 LLegNeutral = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
-	Wizard->SetAngle(LC_MFW_LLEG, static_cast<float>(StrideAngle));
-	const lcMatrix44 LLegForward = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
-	Wizard->SetAngle(LC_MFW_LLEG, static_cast<float>(-StrideAngle));
-	const lcMatrix44 LLegBack = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
-
-	// A pure "how did the leg move" delta, independent of where in the scene the minifig actually
-	// is (the wizard always computes matrices relative to its own fixed origin) - applying this
-	// delta on top of each piece's CURRENT (start-of-cycle) world matrix reproduces the same swing
-	// wherever the figure has actually been placed/moved to.
-	const lcMatrix44 RLegNeutralInv = lcMatrix44AffineInverse(RLegNeutral);
 	const lcMatrix44 LLegNeutralInv = lcMatrix44AffineInverse(LLegNeutral);
-	const lcMatrix44 RLegForwardDelta = lcMul(RLegForward, RLegNeutralInv);
-	const lcMatrix44 RLegBackDelta = lcMul(RLegBack, RLegNeutralInv);
-	const lcMatrix44 LLegForwardDelta = lcMul(LLegForward, LLegNeutralInv);
-	const lcMatrix44 LLegBackDelta = lcMul(LLegBack, LLegNeutralInv);
 
 	struct lcStartPose { lcVector3 Position; lcMatrix33 Rotation; };
 	QMap<lcPiece*, lcStartPose> StartPoses;
@@ -916,9 +905,20 @@ void lcAnimateWidget::WalkCycleClicked()
 
 		for (int Step = 0; Step < Steps; Step++)
 		{
-			const bool RightForward = (Step % 2) == 0;
-			const lcMatrix44& RDelta = RightForward ? RLegForwardDelta : RLegBackDelta;
-			const lcMatrix44& LDelta = RightForward ? LLegBackDelta : LLegForwardDelta;
+			// A sine sweep instead of a hard binary flip between +/-StrideAngle: every frame gets an
+			// in-between pose (contact - passing - contact - passing), and the sine's own slope
+			// naturally eases the swing in/out at each extreme instead of snapping to it at a
+			// constant angular speed.
+			const float Phase = LC_2PI * static_cast<float>(Step) / static_cast<float>(Steps);
+			const float RightAngle = static_cast<float>(StrideAngle) * sinf(Phase);
+			const float LeftAngle = -RightAngle;
+
+			Wizard->SetAngle(LC_MFW_RLEG, RightAngle);
+			const lcMatrix44 RDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_RLEG], RLegNeutralInv);
+
+			Wizard->SetAngle(LC_MFW_LLEG, LeftAngle);
+			const lcMatrix44 LDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_LLEG], LLegNeutralInv);
+
 			const lcMatrix44 Forward = lcMatrix44Translation(ForwardAxis * static_cast<float>(StepDistance * (Step + 1)));
 
 			for (lcPiece* Piece : RightLegPieces)
