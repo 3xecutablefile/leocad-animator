@@ -1,280 +1,171 @@
-# AGENTS.md — StopMotionDigital (leocad-animator)
+# AGENTS.md — StopMotionDigital
 
-This file exists so a fresh agent (or a future session) can pick up this project with zero prior
-context. Read this fully before touching code.
+Professional digital stop-motion LEGO animation software. Built on LeoCAD (C++/Qt, LDraw-based
+virtual LEGO CAD) — rebranded "StopMotionDigital" throughout the UI. **Not** a general CAD tool:
+no physics, no gravity, no camera simulation. Pure digital posing tool: position is data you set
+per frame.
 
-## What this project is
+GitHub: `3xecutablefile/leocad-animator` (origin), forked from `leozide/leocad` (upstream).
 
-A fork of LeoCAD (C++/Qt, LDraw-based virtual LEGO CAD) repurposed into a digital stop-motion LEGO
-animation app, rebranded "StopMotionDigital" throughout the UI. GitHub: `3xecutablefile/leocad-animator`
-(origin), forked from `leozide/leocad` (upstream). Original plan was 3 tabs (Minifig Maker / Set
-Builder / Animate); LeoCAD already provides the first two, so almost all of this project's original
-work is the **Animate dock** (`common/lc_animatewidget.h/.cpp`) plus supporting changes elsewhere.
+## Workflow rules
 
-There is no physics, no gravity, no camera — this is purely a digital posing tool. "The minifig
-won't fall over" because nothing simulates that; position is just data you set per frame.
-
-## Non-negotiable workflow rules for this repo (override the user's global CLAUDE.md)
-
-- **Push directly to `master`. No feature branches, no PRs.** The user explicitly overrode their
-  own global branch/PR policy for this repo ("nigga from now on only push to master"). Do not
-  create branches here.
-- **NEVER add `Co-Authored-By: Claude` (or any AI co-author trailer) to commits.** The user was
-  emphatic about this and had prior history rewritten (`git filter-branch --msg-filter`) to strip
-  it once already. Just `git commit -m "..."` with no trailer, ever.
-- Build and smoke-test locally (launch the app, confirm it doesn't crash) before every commit.
-  Qt 6.8.3 is installed via Homebrew at `/opt/homebrew`. Build commands:
+- **Push directly to `master`.** No feature branches, no PRs. User explicitly overrode the global
+  CLAUDE.md branch policy for this repo.
+- **NEVER add `Co-Authored-By: Claude` (or any AI co-author trailer) to commits.** Previous
+  session's history was rewritten to strip it. Just `git commit -m "..."`.
+- Build and smoke-test locally before every commit:
   ```
-  cd /Users/NotSmartMan/leocad
-  qmake6 leocad.pro          # only needed if build/ or Makefile is missing
+  qmake6 leocad.pro          # only if build/ or Makefile is missing
   make -j$(sysctl -n hw.ncpu)
   ```
-- Clean build artifacts before committing (`rm -f povray .qmake.stash Makefile && rm -rf build`),
-  but **first** copy the root `povray` file back from an existing built app bundle
-  (`/Applications/StopMotionDigital.app/Contents/MacOS/povray` — it's a 0-byte stub, gitignored,
-  required by `leocad.pro`'s `QMAKE_BUNDLE_DATA` or qmake fails with "no rule to make target
-  povray"). Don't just `rm -f povray` without restoring it after the final build of a session.
-- After a successful build, this session has been updating the installed copy too:
+- Clean build artifacts before committing: `rm -f povray .qmake.stash Makefile && rm -rf build`,
+  then restore `povray` from `/Applications/StopMotionDigital.app/Contents/MacOS/povray` (0-byte
+  stub, gitignored, required by `leocad.pro`'s `QMAKE_BUNDLE_DATA` — without it qmake fails).
+- After build, update the installed copy:
   `rm -rf /Applications/StopMotionDigital.app && cp -R build/release/StopMotionDigital.app /Applications/StopMotionDigital.app`
-- `open build/release/StopMotionDigital.app` + `ps aux | grep StopMotionDigital` is the smoke test
-  used throughout — confirms it launches and stays running. This does **not** verify visual/3D
-  correctness — there is no way in this environment to actually watch the 3D viewport. Flag that
-  limitation explicitly when shipping anything involving matrix/rotation math (see "Known risk
-  area" below) rather than silently claiming it's verified.
+- Smoke test: `open build/release/StopMotionDigital.app` + `ps aux | grep StopMotionDigital` —
+  confirms launch + no immediate crash. Does **not** verify 3D/matrix correctness (see below).
+- User tests by actually using the app and reports real bugs. Don't claim features are verified
+  when they haven't been seen in the viewport.
 
-## Architecture: why the Animate system is NOT LeoCAD's native Step/keyframe system
+## Architecture
 
-LeoCAD natively has a per-`lcStep` building-instructions keyframe system (`lcModel::GetLastStep()`,
-`InsertStepAction`, `mStepShow`/`mStepHide`, etc.). Early versions of this project tried to reuse
-it for animation and hit a wall of bugs (frame counts collapsing, deletes silently no-oping, newly
-posed pieces appearing in earlier frames retroactively) because that system's semantics are "the
-step a piece first appears in a building guide," not "a captured animation frame." **This was
-deliberately abandoned.** The Animate dock now owns a fully self-contained, parallel
-snapshot-based system instead:
+### Why a custom Animate system (not LeoCAD's native Steps)
 
-- `struct lcAnimateFrame` (`lc_animatewidget.h`): a captured frame = `QMap<lcPiece*, lcVector3>`
-  positions + `QMap<lcPiece*, lcMatrix33>` rotations for every piece, plus camera
-  position/target/up/projection (`HasCamera` flag). Keyed by raw `lcPiece*` pointer — **not**
-  `lcPiece::GetID()`, which is the LDraw part filename and collides between e.g. left/right hands
-  (both literally the part `3820.dat`).
-- `struct lcAnimateDocumentState`: one per `lcModel*` (`QMap<lcModel*, lcAnimateDocumentState>` in
-  `lcAnimateWidget`), because `lcGetActiveModel()` is not stable — it switches when entering/
-  exiting a submodel in place. Holds `std::vector<lcAnimateFrame> Frames`, `CurrentFrameIndex`,
-  a thumbnail `QMap<int, QIcon>` cache, and `QSet<lcPiece*> AnimateForcedHidden`.
-- Piece mutations bypass LeoCAD's Step-keying entirely: `Piece->SetPosition(v, Step, /*AddKey=*/false)`
-  with an empty key list takes `lcObjectProperty<T>::ChangeKey`'s fast path, which is just a plain
-  value assignment. Step is conventionally always `1` throughout this system — there is no real
-  use of multiple LeoCAD steps.
-- `lcPiece::mHidden` is reused to hide pieces absent from the current frame (so "add a piece at
-  frame 7" doesn't show it retroactively at frame 1), but this flag is shared with LeoCAD's native
-  Hide/Show Selected feature. Resolved via `QSet<lcPiece*> AnimateForcedHidden` — the animate
-  system only ever un-hides a piece it hid itself, never one the user hid manually.
-- **Persistence**: animation data is NOT part of the LDraw/binary file format. It's written to a
-  companion `<file>.animate.json` next to the project file (`SaveAnimationData`/
-  `LoadAnimationData` in `lc_animatewidget.cpp`, hooked into `Project::Save`/`Project::Load` in
-  `project.cpp`). Re-association after reload uses **piece index** (stable across a same-file
-  round trip since LDraw piece order is stable), not pointer identity (pointers don't survive
-  reload).
-- Undo: `lcModel::BeginHistorySequence`/`EndHistorySequence`/`BeginEditHistory`/`EndEditHistory`
-  are **protected**, and they generically diff whole-model piece/group/camera/light state — they
-  do nothing useful for something that only mutates the Animate widget's own frame list (Capture/
-  Duplicate/Delete Frame are honestly **not** undoable via Ctrl+Z; this is disclosed in a comment
-  at the top of `CaptureClicked`, not silently broken). For operations that genuinely DO mutate
-  real piece state (Attach to Hand, Mirror Pose, Walk Cycle), use the public wrapper added for
-  this purpose:
-  ```cpp
-  Model->RunInHistorySequence(tr("Description"), [&]() { /* piece mutations */ });
-  ```
-  (declared in `lc_model.h`, implemented in `lc_model.cpp` right after `SetObjectsKeyFrame`).
+LeoCAD's built-in `lcStep`/keyframe system tracks "the step a piece first appears in a building
+guide." Early attempts to reuse it for animation failed (frame counts collapsing, deletes silently
+no-oping, retroactive piece visibility). The Animate dock now owns a fully self-contained,
+snapshot-based system:
 
-## Feature inventory (what's built, and where)
+- **`lcAnimateFrame`**: per-frame snapshot = `QMap<lcPiece*, lcVector3>` positions +
+  `QMap<lcPiece*, lcMatrix33>` rotations + camera state (position/target/up/projection). Keyed
+  by raw `lcPiece*` pointer — not `lcPiece::GetID()` (the LDraw part filename, which collides
+  between e.g. left and right hands, both `3820.dat`).
+- **`lcAnimateDocumentState`** per `lcModel*`: `std::vector<lcAnimateFrame> Frames`,
+  `CurrentFrameIndex`, thumbnail cache, `AnimateForcedHidden` set, `lcAnimateMode` enum,
+  `std::vector<lcKeyframePoint> Keyframes`.
+- Piece mutations bypass LeoCAD Step-keying: `Piece->SetPosition(v, 1, false)` with an empty key
+  list takes the fast path — plain value assignment. Step is always `1`.
+- **`AnimateForcedHidden`**: `lcPiece::mHidden` is reused to hide pieces absent from the current
+  frame. This set tracks which pieces the animation system hid, so it doesn't un-hide pieces the
+  user hid manually via native Hide Selected.
+- **Persistence**: companion `<file>.animate.json` next to the project file. Re-association after
+  reload uses piece index (stable across a same-file round trip), not pointer identity.
+- **Undo**: frame operations (Capture, Delete, Duplicate) are not undoable via Ctrl+Z (disclosed
+  in comment at `CaptureClicked`). Piece-level operations (Walk Cycle, Mirror Pose, Attach to
+  Hand) use `Model->RunInHistorySequence(tr("..."), [&](){ ... })`.
 
-All in `common/` unless noted.
+### `lcGroup::mMinifigFamily`
+
+Tags the 6 per-limb-assembly groups of one Posable minifig as belonging together **without**
+making them a parent/child group. A parent group would make a single click select the whole figure
+— defeating Posable mode's purpose. This tag is only consulted by code explicitly looking for
+"everything belonging to this minifig" (Alt+click, Mirror Pose sibling lookup, Walk Cycle piece
+gathering). Do not repurpose `lcGroup` for this.
+
+## Feature inventory (all in `common/` unless noted)
 
 | Feature | Files | Notes |
 |---|---|---|
-| Animate dock UI (filmstrip, capture, play, onion skin, export) | `lc_animatewidget.h/.cpp` | Core of the whole project |
-| Camera capture/playback per frame | `lc_animatewidget.h/.cpp`, `camera.h` (added `GetPosition/GetTargetPosition/GetUpVector` getters) | `lcView::GetCamera()` always returns a valid camera |
-| Save/load persistence (`.animate.json`) | `lc_animatewidget.cpp`, `project.cpp` | Fixed a real "animation lost on reopen" bug — was never wired up before |
-| Socket Mode / Free Move toggle | `lc_mainwindow.h` (flag), `lc_view.cpp` (`UpdateTrackTool`, ~line 2149) | Blocks click-drag-translate on a piece in a `"Minifig "`-prefixed group **only when the whole selection is confined to that one limb group** — a multi-group (whole-figure) drag is allowed through even with Socket Mode on |
-| Posable minifig grouping | `lc_model.cpp` (`ShowMinifigDialog`, ~line 5582) | 6 separate top-level groups (Head/Torso/RightArm/LeftArm/RightLeg/LeftLeg), each named `"Minifig <Name> #N"`. **Deliberately no parent group** — see "Group hierarchy gotcha" below |
-| Attach to Hand | `lc_animatewidget.cpp` (`AttachToHandClicked`) | Reuses `MinifigWizard`'s parsed `minifig.ini` hand-offset tables via a lazily-constructed static `MinifigWizard*`. Currently hardcoded to always use the right-hand offset table (documented `ponytail:` comment) |
-| Mirror Pose | `lc_animatewidget.cpp` (`MirrorPoseClicked`) | **Legs only** — copies the rotation matrix verbatim from one leg piece to its counterpart (matched by identical `mPieceInfo`). Deliberately does not support arms (usually different mirrored LDraw parts, direct matrix copy would be wrong) |
-| Alt+click select whole minifig | `lc_model.h/.cpp` (`SelectMinifigFamilyAction`), `lc_view.cpp` (`OnButtonDown`, Select case) | Uses `lcGroup::mMinifigFamily` (see below) |
-| Walk Cycle generator | `lc_animatewidget.cpp` (`WalkCycleClicked`) | Reuses `MinifigWizard::SetAngle`/`Calculate()` (the exact math the Wizard's angle sliders use) rather than re-deriving hip rotation formulas. Supports arm swing (Right Arm/Left Arm groups, opposite-phase), speed slider (1-10), stride angle, gait presets. See "Known risk area" |
-| Camera projection per frame | `lc_animatewidget.h/.cpp`, `camera.h` | `lcCameraProjection` saved in `lcAnimateFrame`/`lcKeyframePose`, restored by `lcPoseAnimateFrame`, persisted in `.animate.json` |
+| Animate dock UI (filmstrip, capture, play, export) | `lc_animatewidget.h/.cpp` | Core of the whole project |
+| Camera capture/playback per frame | `lc_animatewidget.h/.cpp`, `camera.h` | Position/target/up saved per frame, restored during playback |
+| Camera projection per frame | `lc_animatewidget.h/.cpp`, `camera.h` | `lcCameraProjection` saved in every frame/keyframe, persisted in `.animate.json`, restored on pose |
+| Save/load persistence (`.animate.json`) | `lc_animatewidget.cpp`, `project.cpp` | Wired into `Project::Save/Load` |
+| Onion skin preview (dock thumbnail) | `lc_animatewidget.cpp` (`RefreshOnionSkin`) | Small thumbnail of previous frame in the animate dock |
+| Viewport onion skin overlay | `lc_view.cpp`, `lc_context.cpp` | Ghost pass in `OnDraw` at 50% alpha via `SetAlphaScale` in `FlushState` |
+| Viewport ghost system API | `lc_view.h`, `lc_context.h` | `SetGhostFrame`/`ClearGhost` on views, `SetAlphaScale` on context |
+| Socket Mode / Free Move toggle | `lc_mainwindow.h`, `lc_view.cpp` | Blocks click-drag-translate on a piece in a single-limb-group selection; multi-group selection bypasses |
+| Posable minifig grouping | `lc_model.cpp` | 6 top-level groups (Head/Torso/RightArm/LeftArm/RightLeg/LeftLeg), named `"Minifig <Name> #N"` |
+| Attach to Hand | `lc_animatewidget.cpp` | Reuses `MinifigWizard` hand-offset tables. Currently right-hand only |
+| Mirror Pose | `lc_animatewidget.cpp` | **Legs only**. Copies rotation matrix between matched leg pieces (by `mPieceInfo`). Arms unsupported — mirrored parts differ |
+| Alt+click select whole minifig | `lc_model.h/.cpp`, `lc_view.cpp` | Uses `mMinifigFamily` |
+| Walk Cycle generator | `lc_animatewidget.cpp` | Dialog with gait (Walk/Jog/Run), stride angle, arm swing, speed slider, direction, travel distance readout. Reuses `MinifigWizard::SetAngle/Calculate`. Per-slot wizard mapping for correct arm→hand chains |
+| Gait phase warping | `lc_animatewidget.cpp` | Walk = pure sine, Jog = peaky (2nd harmonic), Run = asymmetric phase modulation |
+| Constant Keyframe mode | `lc_animatewidget.h/.cpp`, `lc_keyframetimelinewidget.h/.cpp` | Timeline widget, easing per-segment (Linear/EaseIn/EaseOut/EaseInOut), BakeKeyframes interpolator, mode selector (QComboBox) |
 | Minifig Wizard "Posable" checkbox | `lc_minifigdialog.h/.cpp/.ui` | On by default |
-| CI: rolling "continuous" release, macOS DMG | `.github/workflows/release.yml`, `.github/workflows/continuous.yml` | Pinned to `macos-14` — newer runner SDKs (26.5) break the Qt 6.8.3/5.15.2 build (`AGL not found`, `qyieldcpu.h` implicit-decl) |
-| Rebrand LeoCAD → StopMotionDigital | ~15 files (`Info.plist`, `lc_aboutdialog.*`, `lc_application.cpp`, etc.) | Left alone deliberately: `.lcd` binary magic bytes, internal function names like `lcVector3LDrawToLeoCAD`, upstream Help-menu links |
+| CI: rolling "continuous" macOS DMG | `.github/workflows/release.yml`, `.github/workflows/continuous.yml` | Pinned to `macos-14` |
+| Rebrand LeoCAD → StopMotionDigital | ~15 files | Exceptions: `.lcd` binary magic bytes, internal function names, CI stdout still says "LeoCAD" |
 
-### `lcGroup::mMinifigFamily` — important, easy to misuse
+### Known risk area: 3D transform math
 
-Added to `group.h`. Tags the 6 per-limb-assembly groups of one Posable minifig instance as
-belonging together, **without** making them an actual parent/child group. This distinction matters:
-`lcPiece::GetTopGroup()` walks the *real* `mGroup` parent chain, and a plain click-select
-(`lcModel::SetObjectsSelected` → `SelectGroup(Piece->GetTopGroup(), ...)`) selects everything under
-the top group. If the 6 assemblies were nested under one real parent group, a single click on any
-limb would select the whole figure again — exactly what Posable mode exists to prevent. So
-`mMinifigFamily` is a separate, selection-hierarchy-independent tag, only consulted explicitly by
-code that wants "everything belonging to this minifig instance" (Alt+click select, Mirror Pose's
-sibling lookup, Walk Cycle's piece gathering). Do not repurpose `mGroup` for this.
+This environment cannot render/watch the 3D viewport. Every matrix/rotation feature (camera
+capture, Attach to Hand, Mirror Pose, Walk Cycle, Constant Keyframe interpolation) was built by
+reasoning through matrix composition algebraically — not by visual confirmation.
 
-## Known risk area: 3D transform math verified algebraically, not visually
+Key established facts (do not re-derive):
+- `lcMul(a, b)` = standard matrix product `a * b`; under row-vector convention, **"apply `a`
+  first, then `b`."**
+- `lcMatrix44AffineInverse` / `lcMatrix44Inverse` in `lc_math.h` (~line 1397/1412).
+- Delta-matrix pattern: `NewMatrix = lcMul(lcMul(Delta, StartMatrix), Forward)` where
+  `Delta = lcMul(WizardMatrixAtAngle, lcMatrix44AffineInverse(WizardMatrixAtNeutral))`.
+- `MinifigWizard::Calculate()` (~line 320-480 in `minifig.cpp`) is the source of truth for
+  per-part offset/rotation conventions. **Reuse this — do not re-derive formulas.**
+- Hip swing axis is local X; foot travels along Y ("forward = +Y" in Walk Cycle).
+- `lcQuaternionRotationX/Y/Z`, `lcQuaternionFromAxisAngle`, `lcQuaternionToAxisAngle`,
+  `lcQuaternionMultiply`, `lcQuaternionMul` exist in `lc_math.h` (~line 1550-1600).
+- `lcMatrix33ToQuaternion` and `lcQuaternionToMatrix33` were added this session.
+- No `lcQuaternionSlerp` exists yet (needed for proper multi-axis rotation interpolation).
 
-This environment cannot render/watch the 3D viewport — every matrix/rotation feature in this
-project (camera capture, Attach to Hand, Mirror Pose, Walk Cycle) was built by reasoning through
-the matrix composition algebraically (checking `lcMul`'s actual row-vector convention in
-`lc_math.h` rather than assuming), not by visual confirmation. Walk Cycle already had one real bug
-shipped and fixed this way: the first version alternated frames between the full +StrideAngle/
--StrideAngle extreme with **no in-between pose** (a hard binary flip, not a sweep), which the user
-reported as "empty frames" and "not eased in/out." Fixed by switching to a sine-sweep per frame
-(`sinf(LC_2PI * Step / Steps) * StrideAngle`), which gives every frame an actual in-between pose
-and naturally eases at the extremes (sine's slope flattens near its peaks). **If you touch any of
-this math, be upfront that you can't visually verify it — say so, don't claim it's confirmed
-working.**
+## COMPLETED
 
-Key facts established while debugging this (don't re-derive):
-- `lcMul(a, b)` in `lc_math.h` (~line 837) is standard matrix product `a * b`, and under this
-  codebase's row-vector convention that means **"apply `a` first, then `b`."**
-- `lcMatrix44AffineInverse` / `lcMatrix44Inverse` exist in `lc_math.h` (~line 1397/1412).
-- To apply a "how did this change" delta computed in one reference frame (e.g. `MinifigWizard`'s
-  fixed-origin space) onto a piece's actual current world matrix regardless of where that piece
-  really is in the scene: `NewMatrix = lcMul(lcMul(Delta, StartMatrix), Forward)` where
-  `Delta = lcMul(WizardMatrixAtTargetAngle, lcMatrix44AffineInverse(WizardMatrixAtNeutralAngle))`.
-  Derivation is in the Walk Cycle commit message / this file's git history if needed again.
-- `minifig.cpp`'s `MinifigWizard::Calculate()` (~line 320-480) is the source of truth for every
-  per-part offset/rotation-axis convention (e.g. hip swing is `RotationX`, meaning the swing axis
-  is local X and the foot travels along Y — this is where "forward = +Y" in Walk Cycle comes from).
-  **Reuse this function via a `MinifigWizard` instance instead of re-deriving formulas** — that's
-  the whole reason Walk Cycle calls `Wizard->SetAngle(...)` / reads back `Wizard->mMinifig.Matrices[...]`
-  rather than hand-rolling hip rotation math.
-- **No quaternion/SLERP or matrix↔quaternion conversion exists in `lc_math.h` yet.** It has
-  `lcVector4`-based quaternion helpers (`lcQuaternionRotationX/Y/Z`, `lcQuaternionFromAxisAngle`,
-  `lcQuaternionToAxisAngle`, `lcQuaternionMultiply`, `lcQuaternionMul` — all around line 1550-1600)
-  but **no** `lcMatrix33`↔quaternion conversion and **no** slerp function. This is directly relevant
-  to the in-progress work below.
+### Walk Cycle
+- Dialog: gait preset, stride angle, arm swing, speed slider (1-10, 4-40 frames), direction
+  (0-359 deg compass), total travel distance readout in LDU/studs.
+- Per-slot wizard mapping: `FindPieceForSlot()` matches each piece's `mPieceInfo` against
+  `Wizard->mSettings[Type]` to find RLEG/LLEG/RARM/LARM/RHAND/LHAND pieces.
+- Hand-follows-arm: separate RHAND/LHAND delta computed when hand pieces are detected within arm
+  groups, so hands move through the wizard's multi-joint chain instead of getting a group-level
+  delta.
+- Gait phase warping: Walk = pure sine, Jog = peaky (2nd harmonic `0.85*sin + 0.15*sin2`), Run =
+  asymmetric (`sinf(Phase + 0.25*sinf(Phase))`).
+- Crash fix: frames built locally via `push_back`, then `std::move` into `State.Frames` inside a
+  minimal `RunInHistorySequence` wrapper (vector reallocation was crashing when `QMap`-backed
+  elements moved during `insert`).
+- Arm swing: opposite-phase via `MinifigWizard::SetAngle(LC_MFW_RARM/LC_MFW_LARM)`.
+- Camera projection per frame: `SnapshotFrame` captures `Camera->GetProjection()`, restored by
+  `lcPoseAnimateFrame`, persisted in `.animate.json`.
 
-## COMPLETED: "Constant Keyframe" mode
+### Constant Keyframe Mode
+- `lcAnimateMode` enum (`StopMotion` / `ConstantKeyframe`) + QComboBox mode selector.
+- `lcKeyframePose` (same shape as `lcAnimateFrame` without per-piece-existence semantics).
+- `lcKeyframePoint`: time index + pose + per-segment `lcEasingType`.
+- `lcEasingType`: Linear, EaseIn (cubic), EaseOut (cubic), EaseInOut (cubic).
+- `BakeKeyframes()`: sorts keyframes by time, iterates span, lerps positions, axis-angle lerps
+  rotations, applies per-segment easing, lerps camera. Output is same `lcAnimateFrame` vector as
+  Stop Motion — playback/export pipeline unchanged.
+- `lcKeyframeTimelineWidget`: custom QWidget with diamond keyframe markers, easing labels per
+  segment, 10-frame interval tick marks with labels, current-time cursor (red line), click-to-seek
+  and click-to-select, drag-to-seek on the timeline, step forward/back (`<<` `>>`) buttons.
+- Add/Delete keyframe buttons + easing combo per selected keyframe.
+- `AddKeyframeClicked` uses `mTimelineWidget->GetCurrentTime()` (not `State.CurrentFrameIndex`).
+- `SetKeyframes()` called after every mutation to avoid dangling pointer from `push_back`/`erase`.
 
-The user wants a second Animate mode selectable alongside the existing "Stop Motion" capture
-workflow: a **Constant Keyframe** mode, explicitly compared to DaVinci Resolve's keyframe editor.
-Requirements gathered via `AskUserQuestion` (all three answered — this is the locked-in scope, do
-not re-ask):
+## IN PROGRESS
 
-1. **Separate keyframe timeline UI** (not reusing the stop-motion filmstrip) — a distinct
-   Resolve-style track showing keyframe markers on a time axis.
-2. **Easing curve shape per segment** is user-adjustable (not just duration/spacing between
-   keyframes) — e.g. Linear / Ease In / Ease Out / Ease In-Out presets per segment between two
-   consecutive keyframes. (Full draggable-Bezier-handle editing was not asked for explicitly and
-   is likely overscope for v1 — a preset dropdown per segment satisfies the literal request
-   without a bezier-curve-editor widget; confirm with the user if unsure before building a full
-   curve editor.)
-3. **Chain any number of keyframes** (A→B→C→D→...), not just two points at a time.
+### Walk cycle projection ghost
+Semi-transparent ghost showing where the minifig will be during the walk cycle animation.
+- Adjustable distance control (how far ahead the projection extends).
 
-### Design direction settled on before work was interrupted (not yet implemented)
+## BACKLOG
 
-- New enum `lcAnimateMode { StopMotion, ConstantKeyframe }`, presumably a per-model or per-widget
-  mode toggle in the Animate dock (exact UI placement not yet decided — a dropdown/radio pair
-  matching the "Anim menu" phrasing the user used).
-- New data types (not yet added to `lc_animatewidget.h`):
-  ```cpp
-  enum class lcEasingType { Linear, EaseIn, EaseOut, EaseInOut };
+- **Drag-to-move keyframes** on the Constant Keyframe timeline (currently click-to-seek only).
+- **Rubber-band select** / right-click context menu on timeline.
+- **Full quaternion SLERP** for `BakeKeyframes` rotation interpolation (axis-angle is exact for
+  single-axis minifig rotations but approximate for multi-axis).
+- **Left-hand Attach to Hand** (currently hardcoded to right-hand offset table).
+- **Arm Mirror Pose** (currently legs-only; mirrored LDraw parts differ so direct matrix copy
+  fails).
+- **Minor rebrand gaps**: CI stdout still says "LeoCAD Continuous Build" (`lc_application.cpp:768`),
+  LDraw library warning labels.
+- **Auto-keyframe at time 0** / at end of frame range (user currently must add keyframes
+  explicitly).
 
-  struct lcKeyframePose // same shape as lcAnimateFrame minus the per-piece-existence semantics
-  {
-      QMap<lcPiece*, lcVector3> Positions;
-      QMap<lcPiece*, lcMatrix33> Rotations;
-      lcVector3 CameraPosition, CameraTarget, CameraUpVector;
-      bool HasCamera = false;
-  };
+## COMPLETED: Viewport ghost system (onion skin + walk cycle projection)
 
-  struct lcKeyframePoint
-  {
-      int Time; // frame number on the new timeline
-      lcKeyframePose Pose;
-      lcEasingType SegmentEasing = lcEasingType::EaseInOut; // eases the segment FROM this point TO the next
-  };
-  ```
-- **Key integration decision (settled, keep this)**: rather than building a second parallel
-  playback/export/thumbnail pipeline, *bake* the interpolated result into the **same**
-  `std::vector<lcAnimateFrame> Frames` type that Stop Motion mode already uses, regenerated
-  whenever a keyframe/easing/timing changes. This means `Play`/`Timeout`/`ApplyFrame`/
-  `RenderFrameThumbnail`/`ExportClicked` all keep working completely unchanged for Constant
-  Keyframe mode too — only the *editing* UI and the *generation* step are new. Don't build a
-  second Play/Export path.
-- **Open, unsolved problem — read the "Known risk area" section above**: correct rotation
-  interpolation between two `lcMatrix33` keyframe rotations requires either (a) quaternion SLERP
-  (mathematically correct for any rotation, but needs matrix↔quaternion conversion functions that
-  **do not exist yet** in `lc_math.h` and would need to be written and gotten right with no visual
-  verification available), or (b) a scoped-down assumption exploiting that most posed rotations in
-  this app are single-axis (hip/shoulder swings via `RotationX`, matching `minifig.cpp`'s
-  convention) — decompose the rotation delta as an axis+angle via
-  `lcQuaternionToAxisAngle`/`lcQuaternionFromAxisAngle` (which DO already exist) and lerp the angle
-  linearly, which is exact for single-axis rotation and a reasonable (if imperfect) approximation
-  otherwise. Given this project's track record of shipping matrix-math bugs invisible without
-  visual testing (see Walk Cycle above), **strongly consider proposing option (b) to the user
-  explicitly as a scoped-down v1**, or at minimum flag the SLERP math as unverified when it ships.
-  Naive component-wise lerp of `lcMatrix33` entries (adding two rotation matrices' floats and
-  renormalizing) is **wrong** — it doesn't stay orthonormal / doesn't produce constant-speed
-  rotation — do not do this.
-- Position interpolation is the easy part: linear lerp between keyframe positions, then remap
-  `t` through whichever easing function the segment uses (standard cubic ease-in/out formulas,
-  no existing helper in this codebase — will need to write `float ApplyEasing(lcEasingType, float t)`
-  from scratch, this part is low-risk/well-known math).
-- Camera interpolation: same position/target/up lerp, should probably follow the same segment
-  easing as everything else in that segment.
-- Not yet designed: the actual timeline widget (new `QWidget` subclass, probably
-  `lc_keyframetimelinewidget.h/.cpp` following this project's naming convention — note
-  `lc_keyframewidget.h/.cpp` and `lc_timelinewidget.h/.cpp` **already exist as upstream LeoCAD
-  files** for the native Step system; do not confuse/collide with those, pick a distinct name),
-  how keyframes are added/moved/deleted, how per-segment easing is selected in that UI, and how
-  regeneration is triggered efficiently (avoid re-baking the whole `Frames` vector on every minor
-  drag if it's expensive — probably fine to just always fully regenerate given typical keyframe
-  counts are small, but worth a moment's thought before assuming).
-
-### What was built (next steps list → done)
-
-1. Option (b) chosen: axis-angle decomposition + linear angle lerp for rotation interpolation (exact for single-axis minifig rotations, reasonable approximation otherwise).
-2. `lcEasingType` enum, `ApplyEasing()` inline, `lcKeyframePose`, `lcKeyframePoint` added to `lc_animatewidget.h`.
-3. Per-model `std::vector<lcKeyframePoint> Keyframes` + `lcAnimateMode AnimateMode` in `lcAnimateDocumentState`.
-4. `BakeKeyframes()` in `lc_animatewidget.cpp`: sorts keyframes by time, iterates `[FirstTime, LastTime]` span, lerps positions, axis-angle lerps rotations, lerps camera, applies per-segment easing.
-5. `lcKeyframeTimelineWidget` (`common/lc_keyframetimelinewidget.h/.cpp`): custom QWidget with keyframe diamond markers, easing labels, segment frame ticks, current-time cursor, click-to-select/seek.
-6. `lcAnimateMode` enum + QComboBox mode selector in the Animate dock UI row.
-7. Build, smoke-test launch, commit to master, push, copied to `/Applications/StopMotionDigital.app`.
-8. **Disclosure**: interpolation math is algebraically sound (axis-angle decomposition uses the existing `lcQuaternionToAxisAngle`/`lcQuaternionFromAxisAngle` pipeline in `lc_math.h`) but not visually verified in the 3D viewport. Same risk category as Walk Cycle.
-
-### Remaining gaps for whoever continues
-
-- Keyframe timeline widget is minimal: no drag-to-move keyframes, no rubber-band select, no right-click context menu. Click-to-seek and click-to-select work. Add/Delete buttons add/delete at current timeline position.
-- Easing is per-segment, settable when a keyframe is selected (easing combo reflects the segment *from* that keyframe *to* the next). No visual curve editing.
-- No keyframe at time 0 / at the end of the frame range — the user needs to explicitly add keyframes.
-- Rotation interpolation uses axis-angle, which is correct for single-axis (minifig hip/shoulder swings). For arbitrary multi-axis rotations, full quaternion SLERP would be more correct — the `lcQuaternionSlerp` function needs to be written; `lcMatrix33ToQuaternion` and `lcQuaternionToMatrix33` already exist in `lc_math.h` from this session.
-- Camera projection (`lcCameraProjection`) is now saved/restored per frame in `lcAnimateFrame`, `lcKeyframePose`, and `.animate.json`.
-- **Keyframe placement fix**: `AddKeyframeClicked` was using `State.CurrentFrameIndex` instead of `mTimelineWidget->GetCurrentTime()`. Fixed to use widget's current time so keyframes place at red-line cursor.
-- **Dangling pointer fix**: `mTimelineWidget->SetKeyframes()` stores a raw pointer to `State.Keyframes` that gets invalidated on `push_back`/`erase`. Fixed by calling `SetKeyframes` after every mutation.
-
-### COMPLETED: Walk Cycle crash + arm swing + speed slider + projection save
-
-1. **Crash fix**: `vector::insert` inside `RunInHistorySequence` crashed because vector reallocation moves `QMap`-backed elements. Built frames locally via `push_back`, then `std::move` into `State.Frames` inside minimal history sequence wrapper.
-2. **Arm swing**: Detects Right Arm/Left Arm groups. Oppose-phase rotation via `MinifigWizard::SetAngle(LC_MFW_RARM/LC_MFW_LARM)` matching leg delta-matrix approach.
-3. **Speed slider**: Replaced Duration spinbox with horizontal slider (1-10). Steps = `4 + (10 - speed) * 4` (4-40 frames).
-4. **Camera projection save**: `SnapshotFrame` captures `Camera->GetProjection()`, restored by `lcPoseAnimateFrame`, persisted in `.animate.json`. Also propagated to `lcKeyframePose` + `BakeKeyframes()`.
-5. **Keyframe placement**: `AddKeyframeClicked` now uses `mTimelineWidget->GetCurrentTime()`.
-6. **Disclosure**: arm swing and projection math algebraically sound but not visually verified. Same risk as Walk Cycle.
-
-### COMPLETED: Per-slot wizard mapping (hands follow arms in walk cycle)
-
-Replaced group-level delta approach with per-piece wizard slot mapping. `WalkCycleClicked` now builds a `QHash<PieceInfo*, int>` from `Wizard->mSettings[Type]` to map each minifig piece to its correct wizard slot (RARM, RHAND, RLEG, etc.). Sets piece info for ALL used slots, computes per-slot neutral matrices, and applies per-slot deltas in the main loop. This ensures hands follow arms through the wizard's multi-joint chain (arm→hand) instead of getting a single group-level delta. Algebraically sound but not visually verified.
-
-### COMPLETED: Gait-specific phase warping
-
-Walk = pure sine (smooth symmetric), Jog = peaky (adds second harmonic), Run = asymmetric (phase modulation via `sinf(Phase + 0.25*sinf(Phase))` for quicker push-off, longer recovery). All three preserve the same amplitude/stride angle but change the motion TIMING profile.
-
-## Session housekeeping notes
-
-- User's memory system already has repo-specific notes at
-  `~/.claude/projects/-Users-NotSmartMan/memory/leocad_animator_master_branch_exception.md` and
-  `no_coauthor_trailer.md` — this AGENTS.md is the more detailed/technical companion to those.
-- The user tests by actually using the app and reports real bugs found that way (e.g. the Walk
-  Cycle easing bug) — expect that feedback loop to continue; don't assume "it compiles and
-  launches" means a feature is correct.
+Implementation chosen: **Alpha scale via FlushState** (no shader modification needed).
+- Alpha scale applied in `lcContext::FlushState()` by multiplying `MaterialColor.w` before upload.
+- `lcView::SetGhostFrame()`/`lcView::ClearGhost()` store per-view ghost positions/rotations/alpha.
+- `lcView::OnDraw()` does two-pass: ghost pass (save pieces → pose ghost → draw with `SetAlphaScale` + blending + no depth test → restore → clear depth) then normal pass.
+- Onion skin toggle in the animate dock sets ghost frame data on the active view; updated on every frame navigation.
+- Infrastructure shared by walk cycle projection ghost (same `SetGhostFrame`/`ClearGhost` API).
+- Cannot be visually verified in this environment. Same risk as all matrix math features.

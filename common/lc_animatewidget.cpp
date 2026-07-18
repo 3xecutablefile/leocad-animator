@@ -505,6 +505,20 @@ void lcAnimateWidget::Update()
 
 		if (!mPlayTimer->isActive())
 			RefreshOnionSkin(Model);
+
+		// Keep viewport ghost in sync with current frame position
+		if (lcView* ActiveView = gMainWindow->GetActiveView())
+		{
+			if (mOnionSkinCheck->isChecked() && State.CurrentFrameIndex > 0)
+			{
+				const lcAnimateFrame& PrevFrame = State.Frames[State.CurrentFrameIndex - 1];
+				ActiveView->SetGhostFrame(PrevFrame.Positions, PrevFrame.Rotations, 0.5f);
+			}
+			else
+			{
+				ActiveView->ClearGhost();
+			}
+		}
 	}
 
 	mUpdating = false;
@@ -649,12 +663,27 @@ void lcAnimateWidget::Timeout()
 	Update();
 }
 
-void lcAnimateWidget::OnionSkinToggled(bool)
+void lcAnimateWidget::OnionSkinToggled(bool Checked)
 {
 	lcModel* Model = lcGetActiveModel();
 
 	if (Model)
+	{
+		lcAnimateDocumentState& State = GetState(Model);
+		lcView* ActiveView = gMainWindow->GetActiveView();
+
+		if (Checked && ActiveView && State.CurrentFrameIndex > 0)
+		{
+			const lcAnimateFrame& PrevFrame = State.Frames[State.CurrentFrameIndex - 1];
+			ActiveView->SetGhostFrame(PrevFrame.Positions, PrevFrame.Rotations, 0.5f);
+		}
+		else if (ActiveView)
+		{
+			ActiveView->ClearGhost();
+		}
+
 		RefreshOnionSkin(Model);
+	}
 }
 
 void lcAnimateWidget::SocketModeToggled(bool Checked)

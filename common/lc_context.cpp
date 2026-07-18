@@ -389,6 +389,9 @@ void lcContext::SetDefaultState()
 	mColorBlend = false;
 	glDisable(GL_BLEND);
 
+	mAlphaScale = 1.0f;
+	mAlphaScaleDirty = false;
+
 	if (gSupportsBlendFuncSeparate)
 		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
 	else
@@ -1183,7 +1186,9 @@ void lcContext::FlushState()
 
 		if (mColorDirty && Program.MaterialColorLocation != -1)
 		{
-			glUniform4fv(Program.MaterialColorLocation, 1, mColor.GetFloats());
+			lcVector4 ScaledColor = mColor;
+			ScaledColor.w *= mAlphaScale;
+			glUniform4fv(Program.MaterialColorLocation, 1, ScaledColor.GetFloats());
 			mColorDirty = false;
 		}
 

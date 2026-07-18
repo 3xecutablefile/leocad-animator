@@ -874,11 +874,65 @@ void lcView::OnDraw()
 	mScene->SetAllowLOD(Preferences.mAllowLOD && mWidget != nullptr);
 	mScene->SetLODDistance(Preferences.mMeshLODDistance);
 
-	mScene->Begin(mCamera->mWorldView);
+	// GHOST PASS: render previous frame at reduced alpha behind the current frame (viewport only)
+	if (mDrawGhost && mRenderImage.isNull())
+	{
+		QMap<lcPiece*, lcVector3> SavedPositions;
+		QMap<lcPiece*, lcMatrix33> SavedRotations;
 
+		for (const std::unique_ptr<lcPiece>& Piece : mModel->GetPieces())
+		{
+			lcPiece* Ptr = Piece.get();
+			SavedPositions[Ptr] = Ptr->GetPosition();
+			SavedRotations[Ptr] = Ptr->GetRotation();
+		}
+
+		for (auto It = mGhostPositions.constBegin(); It != mGhostPositions.constEnd(); ++It)
+		{
+			It.key()->SetPosition(It.value(), 1, false);
+			It.key()->SetRotation(mGhostRotations.value(It.key()), 1, false);
+		}
+
+		for (const std::unique_ptr<lcPiece>& Piece : mModel->GetPieces())
+			Piece->UpdatePosition(1);
+
+		mScene->Begin(mCamera->mWorldView);
+		mScene->SetActiveSubmodelInstance(mActiveSubmodelInstance, mActiveSubmodelTransform);
+		mScene->SetDrawInterface(false);
+		mModel->GetScene(mScene.get(), mCamera, false, false);
+		mScene->End();
+
+		mContext->SetDefaultState();
+		mContext->SetViewport(0, 0, mWidth, mHeight);
+		DrawBackground(0, 1, mHeight);
+		mContext->SetProjectionMatrix(GetProjectionMatrix());
+		mContext->SetLineWidth(Preferences.mLineWidth);
+
+		mContext->SetAlphaScale(mGhostAlpha);
+		mContext->EnableColorBlend(true);
+		mContext->EnableDepthTest(false);
+		mContext->SetDepthWrite(false);
+		mScene->Draw(mContext);
+		mContext->EnableDepthTest(true);
+		mContext->SetDepthWrite(true);
+		mContext->EnableColorBlend(false);
+		mContext->SetAlphaScale(1.0f);
+
+		for (auto It = SavedPositions.constBegin(); It != SavedPositions.constEnd(); ++It)
+		{
+			It.key()->SetPosition(It.value(), 1, false);
+			It.key()->SetRotation(SavedRotations.value(It.key()), 1, false);
+		}
+
+		for (const std::unique_ptr<lcPiece>& Piece : mModel->GetPieces())
+			Piece->UpdatePosition(1);
+
+		mContext->ClearDepth();
+	}
+
+	mScene->Begin(mCamera->mWorldView);
 	mScene->SetActiveSubmodelInstance(mActiveSubmodelInstance, mActiveSubmodelTransform);
 	mScene->SetDrawInterface(DrawInterface);
-
 	mModel->GetScene(mScene.get(), mCamera, Preferences.mHighlightNewParts, Preferences.mFadeSteps);
 
 	bool DrawInsertPreview = DrawInterface && std::any_of(mViews.begin(), mViews.end(), [](lcView* View){ return View->mTrackTool == lcTrackTool::Insert; });

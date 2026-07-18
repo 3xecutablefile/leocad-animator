@@ -186,6 +186,12 @@ public:
 		mColorDirty = true;
 	}
 
+	void SetAlphaScale(float Scale)
+	{
+		mAlphaScale = Scale;
+		mAlphaScaleDirty = true;
+	}
+
 	void SetHighlightParams(const lcVector4& HighlightPosition, const lcVector4& TextColor, const lcVector4& BackgroundColor, const lcVector4& HighlightColor)
 	{
 		mHighlightParams[0] = HighlightPosition;
@@ -275,6 +281,8 @@ protected:
 	bool mProjectionMatrixDirty;
 	bool mViewProjectionMatrixDirty;
 	bool mHighlightParamsDirty;
+	float mAlphaScale = 1.0f;
+	bool mAlphaScaleDirty = false;
 
 	static std::unique_ptr<QOpenGLContext> mOffscreenContext;
 	static std::unique_ptr<QOffscreenSurface> mOffscreenSurface;

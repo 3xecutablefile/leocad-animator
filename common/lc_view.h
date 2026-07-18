@@ -200,6 +200,23 @@ public:
 		return mActiveSubmodelTransform;
 	}
 
+	void SetGhostFrame(const QMap<lcPiece*, lcVector3>& Positions, const QMap<lcPiece*, lcMatrix33>& Rotations, float Alpha)
+	{
+		mGhostPositions = Positions;
+		mGhostRotations = Rotations;
+		mGhostAlpha = Alpha;
+		mDrawGhost = true;
+	}
+
+	void ClearGhost()
+	{
+		mDrawGhost = false;
+		mGhostPositions.clear();
+		mGhostRotations.clear();
+	}
+
+	bool IsGhostEnabled() const { return mDrawGhost; }
+
 	static std::vector<lcView*> GetModelViews(const lcModel* Model);
 	static void UpdateProjectViews(const Project* Project);
 	static void UpdateAllViews();
@@ -364,6 +381,11 @@ protected:
 
 	static QPointer<lcFindReplaceWidget> mFindWidget;
 	static lcFindReplaceParams mFindReplaceParams;
+
+	bool mDrawGhost = false;
+	float mGhostAlpha = 0.5f;
+	QMap<lcPiece*, lcVector3> mGhostPositions;
+	QMap<lcPiece*, lcMatrix33> mGhostRotations;
 
 	static lcView* mLastFocusedView;
 	static std::vector<lcView*> mViews;
