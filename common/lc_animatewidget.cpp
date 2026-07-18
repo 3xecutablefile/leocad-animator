@@ -178,8 +178,22 @@ void lcAnimateWidget::Update()
 	mFrameLabel->setText(tr("Frame %1 / %2").arg(CurrentStep).arg(LastStep));
 	mDeleteButton->setEnabled(LastStep > 1);
 
-	RefreshFilmstrip(Model);
-	RefreshOnionSkin(Model);
+	// ponytail: only re-render filmstrip thumbnails (offscreen GL) when the frame count actually
+	// changed. Doing this on every step change was stealing the GL context out from under the live
+	// viewport on every single Play tick, so the 3D view never visibly updated during playback.
+	if (mFilmstrip->count() != static_cast<int>(LastStep))
+		RefreshFilmstrip(Model);
+	else
+	{
+		mIgnoreUpdates = true;
+		mFilmstrip->setCurrentRow(static_cast<int>(CurrentStep) - 1);
+		mIgnoreUpdates = false;
+	}
+
+	// Onion skin is a posing aid, not a playback aid, and rendering it is the same GL-context
+	// hazard, so skip it while actively playing.
+	if (!mPlayTimer->isActive())
+		RefreshOnionSkin(Model);
 }
 
 void lcAnimateWidget::FilmstripItemChanged(int Row)
@@ -261,6 +275,12 @@ void lcAnimateWidget::PlayPauseClicked()
 	{
 		mPlayTimer->stop();
 		mPlayButton->setText(tr("Play"));
+
+		lcModel* Model = lcGetActiveModel();
+
+		if (Model)
+			RefreshOnionSkin(Model);
+
 		return;
 	}
 
