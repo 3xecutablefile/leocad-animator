@@ -17,11 +17,19 @@ void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame)
 	{
 		lcPiece* PiecePtr = Piece.get();
 
-		if (Frame.Positions.contains(PiecePtr))
-			Piece->SetPosition(Frame.Positions.value(PiecePtr), 1, false);
+		// A piece not present in this frame's snapshot didn't exist yet when the frame was
+		// captured (it was added later) - hide it here instead of leaving it visible at whatever
+		// position it happens to currently be in. mHidden is independent of LeoCAD's Step show/hide
+		// range, which we don't use (see lcAnimateFrame comment), so this doesn't fight anything.
+		const bool ExistsInFrame = Frame.Positions.contains(PiecePtr);
 
-		if (Frame.Rotations.contains(PiecePtr))
+		Piece->SetHidden(!ExistsInFrame);
+
+		if (ExistsInFrame)
+		{
+			Piece->SetPosition(Frame.Positions.value(PiecePtr), 1, false);
 			Piece->SetRotation(Frame.Rotations.value(PiecePtr), 1, false);
+		}
 
 		Piece->UpdatePosition(1);
 	}
