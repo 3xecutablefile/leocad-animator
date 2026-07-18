@@ -273,6 +273,12 @@ void lcAnimateWidget::DeleteClicked()
 	Model->RemoveStepAction(Model->GetCurrentStep());
 	mFrameCount--;
 
+	// RemoveStepAction doesn't clamp CurrentStep, so deleting the last frame while sitting on it
+	// leaves CurrentStep pointing past the new end - which then tricks Update()'s "never shrink
+	// the frame count below CurrentStep" self-heal into silently undoing this decrement.
+	if (Model->GetCurrentStep() > mFrameCount)
+		Model->SetCurrentStep(mFrameCount);
+
 	mThumbnailCache.clear();
 	Update();
 }
