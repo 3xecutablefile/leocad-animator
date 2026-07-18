@@ -4,15 +4,19 @@
 #include "lc_model.h"
 #include "lc_mainwindow.h"
 #include "lc_view.h"
+#include "camera.h"
 #include "project.h"
 #include "object.h"
 #include "piece.h"
 #include "minifig.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 static const int THUMBNAIL_WIDTH = 96;
 static const int THUMBNAIL_HEIGHT = 72;
 
-void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame)
+void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame, QSet<lcPiece*>& AnimateForcedHidden)
 {
 	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
 	{
@@ -20,20 +24,110 @@ void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame)
 
 		// A piece not present in this frame's snapshot didn't exist yet when the frame was
 		// captured (it was added later) - hide it here instead of leaving it visible at whatever
-		// position it happens to currently be in. mHidden is independent of LeoCAD's Step show/hide
-		// range, which we don't use (see lcAnimateFrame comment), so this doesn't fight anything.
+		// position it happens to currently be in. Only ever un-hide a piece THIS system hid
+		// itself (tracked in AnimateForcedHidden) - never a piece the user hid manually via the
+		// native Hide Selected feature, which shares the same underlying mHidden flag.
 		const bool ExistsInFrame = Frame.Positions.contains(PiecePtr);
 
-		Piece->SetHidden(!ExistsInFrame);
-
-		if (ExistsInFrame)
+		if (!ExistsInFrame)
 		{
+			if (!Piece->IsHidden())
+				AnimateForcedHidden.insert(PiecePtr);
+
+			Piece->SetHidden(true);
+		}
+		else
+		{
+			if (AnimateForcedHidden.remove(PiecePtr))
+				Piece->SetHidden(false);
+
 			Piece->SetPosition(Frame.Positions.value(PiecePtr), 1, false);
 			Piece->SetRotation(Frame.Rotations.value(PiecePtr), 1, false);
 		}
 
 		Piece->UpdatePosition(1);
 	}
+
+	if (Frame.HasCamera)
+	{
+		if (lcView* View = gMainWindow->GetActiveView())
+		{
+			if (lcCamera* Camera = View->GetCamera())
+			{
+				Camera->SetPosition(Frame.CameraPosition, 1, false);
+				Camera->SetTargetPosition(Frame.CameraTarget, 1, false);
+				Camera->SetUpVector(Frame.CameraUpVector, 1, false);
+				Camera->UpdatePosition(1);
+			}
+		}
+	}
+}
+
+static QJsonArray Vector3ToJson(const lcVector3& Vector)
+{
+	return QJsonArray{ Vector.x, Vector.y, Vector.z };
+}
+
+static lcVector3 Vector3FromJson(const QJsonArray& Array)
+{
+	if (Array.size() != 3)
+		return lcVector3(0.0f, 0.0f, 0.0f);
+
+	return lcVector3(static_cast<float>(Array[0].toDouble()), static_cast<float>(Array[1].toDouble()), static_cast<float>(Array[2].toDouble()));
+}
+
+static QJsonArray Matrix33ToJson(const lcMatrix33& Matrix)
+{
+	QJsonArray Array;
+	const float* Floats = Matrix.GetFloats();
+
+	for (int Index = 0; Index < 9; Index++)
+		Array.append(Floats[Index]);
+
+	return Array;
+}
+
+static lcMatrix33 Matrix33FromJson(const QJsonArray& Array)
+{
+	if (Array.size() != 9)
+		return lcMatrix33Identity();
+
+	float F[9];
+
+	for (int Index = 0; Index < 9; Index++)
+		F[Index] = static_cast<float>(Array[Index].toDouble());
+
+	return lcMatrix33(lcVector3(F[0], F[1], F[2]), lcVector3(F[3], F[4], F[5]), lcVector3(F[6], F[7], F[8]));
+}
+
+// Shifting cached thumbnail indices on insert/delete (instead of clearing the whole cache) means
+// only the frame that actually changed needs re-rendering, not every frame in the animation.
+static void ThumbnailCacheOnInsert(QMap<int, QIcon>& Cache, int InsertIndex)
+{
+	QMap<int, QIcon> Shifted;
+
+	for (auto It = Cache.constBegin(); It != Cache.constEnd(); ++It)
+		Shifted.insert(It.key() >= InsertIndex ? It.key() + 1 : It.key(), It.value());
+
+	Cache = Shifted;
+}
+
+static void ThumbnailCacheOnRemove(QMap<int, QIcon>& Cache, int RemoveIndex)
+{
+	QMap<int, QIcon> Shifted;
+
+	for (auto It = Cache.constBegin(); It != Cache.constEnd(); ++It)
+	{
+		const int Index = It.key();
+
+		if (Index < RemoveIndex)
+			Shifted.insert(Index, It.value());
+		else if (Index > RemoveIndex)
+			Shifted.insert(Index - 1, It.value());
+		// Index == RemoveIndex: that frame no longer exists, drop it.
+	}
+
+	Cache = Shifted;
 }
 
 lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
@@ -48,7 +142,7 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	QVBoxLayout* OnionLayout = new QVBoxLayout;
 	mSocketModeCheck = new QCheckBox(tr("Socket Mode"), this);
 	mSocketModeCheck->setChecked(true);
-	mSocketModeCheck->setToolTip(tr("On: limbs can only rotate, so arms/legs stay attached to their sockets while posing. Off (Free Move): pieces can be dragged and detached, e.g. to pull an arm out of its socket for one frame."));
+	mSocketModeCheck->setToolTip(tr("On: minifig limb pieces can only rotate, staying attached to their sockets. Off (Free Move): they can be dragged and detached, e.g. to pull an arm out of its socket for one frame. Doesn't affect ordinary piece placement."));
 	OnionLayout->addWidget(mSocketModeCheck);
 	mOnionSkinCheck = new QCheckBox(tr("Onion Skin"), this);
 	mOnionSkinCheck->setToolTip(tr("Show a small reference image of the previous frame so you can see how far to move things"));
@@ -63,7 +157,7 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	ControlLayout->addStretch();
 
 	mCaptureButton = new QPushButton(tr("●  Capture Frame"), this);
-	mCaptureButton->setToolTip(tr("Snapshot every piece's position and rotation into a new frame, like pressing the shutter on a stop-motion camera"));
+	mCaptureButton->setToolTip(tr("Snapshot every piece's position/rotation and the current camera view into a new frame, like pressing the shutter on a stop-motion camera"));
 	QFont CaptureFont = mCaptureButton->font();
 	CaptureFont.setPointSize(CaptureFont.pointSize() + 4);
 	CaptureFont.setBold(true);
@@ -154,23 +248,38 @@ lcAnimateDocumentState& lcAnimateWidget::GetState(lcModel* Model)
 	return State;
 }
 
+void lcAnimateWidget::ForgetModel(lcModel* Model)
+{
+	mDocumentStates.remove(Model);
+
+	if (mLastFilmstripModel == Model)
+		mLastFilmstripModel = nullptr;
+}
+
 lcAnimateFrame lcAnimateWidget::SnapshotFrame(lcModel* Model) const
 {
 	lcAnimateFrame Frame;
 
 	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
 	{
-		// Skip pieces currently hidden by lcPoseAnimateFrame (i.e. not part of whatever frame is
-		// actually posed right now). Without this, RefreshFilmstrip/RefreshOnionSkin's "remember
-		// the live state, render some other frame's thumbnails, then restore it" dance would
-		// snapshot every piece unconditionally and restore by un-hiding all of them - silently
-		// undoing the hide that just made a later-added piece correctly disappear from earlier
-		// frames.
+		// Skip pieces currently hidden (native Hide Selected, or this system's own absent-from-
+		// frame hiding) - capturing a frame should only include what's actually visible right now.
 		if (Piece->IsHidden())
 			continue;
 
 		Frame.Positions[Piece.get()] = Piece->GetPosition();
 		Frame.Rotations[Piece.get()] = Piece->GetRotation();
+	}
+
+	if (lcView* View = gMainWindow->GetActiveView())
+	{
+		if (lcCamera* Camera = View->GetCamera())
+		{
+			Frame.CameraPosition = Camera->GetPosition();
+			Frame.CameraTarget = Camera->GetTargetPosition();
+			Frame.CameraUpVector = Camera->GetUpVector();
+			Frame.HasCamera = true;
+		}
 	}
 
 	return Frame;
@@ -183,7 +292,7 @@ void lcAnimateWidget::ApplyFrame(lcModel* Model, int FrameIndex)
 	if (FrameIndex < 0 || FrameIndex >= static_cast<int>(State.Frames.size()))
 		return;
 
-	lcPoseAnimateFrame(Model, State.Frames[FrameIndex]);
+	lcPoseAnimateFrame(Model, State.Frames[FrameIndex], State.AnimateForcedHidden);
 	Model->SetCurrentStep(1); // redraws the live viewport and refreshes the rest of the UI
 }
 
@@ -196,7 +305,7 @@ QIcon lcAnimateWidget::RenderFrameThumbnail(lcModel* Model, int FrameIndex, int 
 
 	// Poses pieces directly without going through SetCurrentStep, so this doesn't touch the live
 	// viewport - the caller is responsible for restoring the real current frame afterward.
-	lcPoseAnimateFrame(Model, State.Frames[FrameIndex]);
+	lcPoseAnimateFrame(Model, State.Frames[FrameIndex], State.AnimateForcedHidden);
 
 	lcView View(lcViewType::View, Model);
 	View.SetOffscreenContext();
@@ -246,7 +355,7 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 	// state once at the end instead of after every single thumbnail (avoids viewport flicker too).
 	if (NeedsViewportRestore)
 	{
-		lcPoseAnimateFrame(Model, LiveState);
+		lcPoseAnimateFrame(Model, LiveState, State.AnimateForcedHidden);
 		Model->SetCurrentStep(1);
 	}
 
@@ -284,7 +393,7 @@ void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 		Icon = RenderFrameThumbnail(Model, PreviousIndex, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
 		State.ThumbnailCache.insert(PreviousIndex, Icon);
 
-		lcPoseAnimateFrame(Model, LiveState);
+		lcPoseAnimateFrame(Model, LiveState, State.AnimateForcedHidden);
 		Model->SetCurrentStep(1);
 	}
 
@@ -294,29 +403,45 @@ void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 
 void lcAnimateWidget::Update()
 {
-	lcModel* Model = lcGetActiveModel();
-
-	if (!Model)
+	// Re-entrancy guard: ApplyFrame's Model->SetCurrentStep(1) synchronously calls back into this
+	// same Update() (via lcModel::SetCurrentStep -> lcMainWindow::UpdateCurrentStep) before the
+	// outer call below has finished. Without this, every frame change did the refresh work twice.
+	if (mUpdating)
 		return;
 
-	lcAnimateDocumentState& State = GetState(Model);
+	mUpdating = true;
 
-	const int FrameCount = static_cast<int>(State.Frames.size());
+	lcModel* Model = lcGetActiveModel();
 
-	mFrameLabel->setText(tr("Frame %1 / %2").arg(State.CurrentFrameIndex + 1).arg(FrameCount));
-	mDeleteButton->setEnabled(FrameCount > 1);
-
-	if (mFilmstrip->count() != FrameCount)
-		RefreshFilmstrip(Model);
-	else
+	if (Model)
 	{
-		mIgnoreUpdates = true;
-		mFilmstrip->setCurrentRow(State.CurrentFrameIndex);
-		mIgnoreUpdates = false;
+		lcAnimateDocumentState& State = GetState(Model);
+
+		const int FrameCount = static_cast<int>(State.Frames.size());
+
+		mFrameLabel->setText(tr("Frame %1 / %2").arg(State.CurrentFrameIndex + 1).arg(FrameCount));
+		mDeleteButton->setEnabled(FrameCount > 1);
+
+		// Compare model identity too, not just frame count - otherwise switching to a different
+		// model (e.g. entering a submodel) that happens to have the same frame count as the one
+		// previously displayed would leave its stale thumbnails on screen.
+		if (mFilmstrip->count() != FrameCount || mLastFilmstripModel != Model)
+		{
+			RefreshFilmstrip(Model);
+			mLastFilmstripModel = Model;
+		}
+		else
+		{
+			mIgnoreUpdates = true;
+			mFilmstrip->setCurrentRow(State.CurrentFrameIndex);
+			mIgnoreUpdates = false;
+		}
+
+		if (!mPlayTimer->isActive())
+			RefreshOnionSkin(Model);
 	}
 
-	if (!mPlayTimer->isActive())
-		RefreshOnionSkin(Model);
+	mUpdating = false;
 }
 
 void lcAnimateWidget::FilmstripItemChanged(int Row)
@@ -341,11 +466,17 @@ void lcAnimateWidget::CaptureClicked()
 	if (!Model)
 		return;
 
+	// Note: this only mutates lcAnimateWidget's own frame list, never a piece, so there is
+	// deliberately no BeginHistorySequence/EndHistorySequence wrapper here - LeoCAD's undo system
+	// diffs piece/camera/light/group state, and would find nothing changed and silently drop the
+	// entry. Capture/Duplicate/Delete Frame are not undoable via Ctrl+Z; that would need a
+	// dedicated undo stack for the frame list itself, which doesn't exist yet.
 	lcAnimateDocumentState& State = GetState(Model);
 
-	State.Frames.insert(State.Frames.begin() + State.CurrentFrameIndex + 1, SnapshotFrame(Model));
-	State.CurrentFrameIndex++;
-	State.ThumbnailCache.clear();
+	const int InsertIndex = State.CurrentFrameIndex + 1;
+	State.Frames.insert(State.Frames.begin() + InsertIndex, SnapshotFrame(Model));
+	State.CurrentFrameIndex = InsertIndex;
+	ThumbnailCacheOnInsert(State.ThumbnailCache, InsertIndex);
 
 	Update();
 }
@@ -357,11 +488,19 @@ void lcAnimateWidget::DuplicateClicked()
 	if (!Model)
 		return;
 
+	// See the comment in CaptureClicked: no history wrapper, this doesn't touch piece data.
 	lcAnimateDocumentState& State = GetState(Model);
 
-	State.Frames.insert(State.Frames.begin() + State.CurrentFrameIndex + 1, State.Frames[State.CurrentFrameIndex]);
-	State.CurrentFrameIndex++;
-	State.ThumbnailCache.clear();
+	const int InsertIndex = State.CurrentFrameIndex + 1;
+	State.Frames.insert(State.Frames.begin() + InsertIndex, State.Frames[State.CurrentFrameIndex]);
+	ThumbnailCacheOnInsert(State.ThumbnailCache, InsertIndex);
+
+	// The duplicated frame is identical to the one it was copied from, so its thumbnail is too -
+	// reuse it instead of leaving a cache miss that would force a render for a picture we already have.
+	if (State.ThumbnailCache.contains(State.CurrentFrameIndex))
+		State.ThumbnailCache.insert(InsertIndex, State.ThumbnailCache.value(State.CurrentFrameIndex));
+
+	State.CurrentFrameIndex = InsertIndex;
 
 	ApplyFrame(Model, State.CurrentFrameIndex);
 	Update();
@@ -379,12 +518,12 @@ void lcAnimateWidget::DeleteClicked()
 	if (State.Frames.size() <= 1)
 		return;
 
+	// See the comment in CaptureClicked: no history wrapper, this doesn't touch piece data.
 	State.Frames.erase(State.Frames.begin() + State.CurrentFrameIndex);
+	ThumbnailCacheOnRemove(State.ThumbnailCache, State.CurrentFrameIndex);
 
 	if (State.CurrentFrameIndex >= static_cast<int>(State.Frames.size()))
 		State.CurrentFrameIndex = static_cast<int>(State.Frames.size()) - 1;
-
-	State.ThumbnailCache.clear();
 
 	ApplyFrame(Model, State.CurrentFrameIndex);
 	Update();
@@ -454,13 +593,10 @@ void lcAnimateWidget::OnionSkinToggled(bool)
 
 void lcAnimateWidget::SocketModeToggled(bool Checked)
 {
-	// Socket Mode disables the Move tool so limbs can only be rotated (staying attached to their
-	// shoulder/hip socket); Free Move re-enables it so a piece can be dragged out of its socket
-	// entirely, e.g. for a "the arm falls off" frame.
-	gMainWindow->mActions[LC_EDIT_ACTION_MOVE]->setEnabled(!Checked);
-
-	if (Checked && gMainWindow->GetTool() == lcTool::Move)
-		gMainWindow->SetTool(lcTool::Rotate);
+	// Enforced in lcView's mouse-manipulation code (see lc_view.cpp's UpdateTrackTool), scoped to
+	// pieces in a Posable minifig limb group only - disabling the Move tool/action globally would
+	// have blocked ordinary piece placement for anyone doing regular set building, not just posing.
+	gMainWindow->SetSocketModeEnabled(Checked);
 }
 
 static const lcMinifigPieceInfo* FindMinifigPieceEntry(const std::vector<lcMinifigPieceInfo>& List, PieceInfo* Info)
@@ -528,15 +664,18 @@ void lcAnimateWidget::AttachToHandClicked()
 		return;
 	}
 
-	const lcMatrix44 HandWorldMatrix(HandPiece->GetRotation(), HandPiece->GetPosition());
-	const lcMatrix44 AccessoryWorldMatrix = lcMul(AccessoryEntry->Offset, HandWorldMatrix);
+	Model->RunInHistorySequence(tr("Attach to Hand"), [&]()
+	{
+		const lcMatrix44 HandWorldMatrix(HandPiece->GetRotation(), HandPiece->GetPosition());
+		const lcMatrix44 AccessoryWorldMatrix = lcMul(AccessoryEntry->Offset, HandWorldMatrix);
 
-	AccessoryPiece->SetPosition(AccessoryWorldMatrix.GetTranslation(), 1, false);
-	AccessoryPiece->SetRotation(lcMatrix33(AccessoryWorldMatrix), 1, false);
-	AccessoryPiece->UpdatePosition(1);
+		AccessoryPiece->SetPosition(AccessoryWorldMatrix.GetTranslation(), 1, false);
+		AccessoryPiece->SetRotation(lcMatrix33(AccessoryWorldMatrix), 1, false);
+		AccessoryPiece->UpdatePosition(1);
 
-	if (lcGroup* HandGroup = HandPiece->GetGroup())
-		AccessoryPiece->SetGroup(HandGroup);
+		if (lcGroup* HandGroup = HandPiece->GetGroup())
+			AccessoryPiece->SetGroup(HandGroup);
+	});
 
 	Model->SetCurrentStep(1);
 }
@@ -548,6 +687,11 @@ void lcAnimateWidget::ExportClicked()
 	if (!Model)
 		return;
 
+	// Playback fighting the export loop for control of the same live model would both flicker the
+	// viewport and leave the frame index in the wrong place once the export dialog closes.
+	if (mPlayTimer->isActive())
+		PlayPauseClicked();
+
 	lcAnimateDocumentState& State = GetState(Model);
 
 	lcAnimateExportDialog Dialog(this, Model, mFpsSpinBox->value(), State.Frames);
@@ -556,4 +700,163 @@ void lcAnimateWidget::ExportClicked()
 	// Exporting poses pieces as each exported frame; make sure the viewport reflects the frame
 	// we're actually parked on once the dialog closes.
 	ApplyFrame(Model, State.CurrentFrameIndex);
+}
+
+void lcAnimateWidget::SaveAnimationData(Project* CurrentProject, const QString& FileName)
+{
+	if (FileName.isEmpty() || !CurrentProject)
+		return;
+
+	QJsonObject ModelsObject;
+	bool AnyData = false;
+
+	for (const std::unique_ptr<lcModel>& ModelPtr : CurrentProject->GetModels())
+	{
+		lcModel* Model = ModelPtr.get();
+		const auto It = mDocumentStates.constFind(Model);
+
+		// Nothing captured beyond the implicit initial frame - nothing worth saving for this model.
+		if (It == mDocumentStates.constEnd() || It.value().Frames.size() <= 1)
+			continue;
+
+		// Piece identity doesn't survive a save/load round trip (pieces are recreated from
+		// scratch), but the ORDER LDraw pieces are saved/loaded in is stable, so index-in-the-
+		// piece-list is used as the on-disk identifier and re-resolved back to real lcPiece*
+		// pointers on load.
+		QMap<lcPiece*, int> PieceIndices;
+		const std::vector<std::unique_ptr<lcPiece>>& Pieces = Model->GetPieces();
+
+		for (size_t Index = 0; Index < Pieces.size(); Index++)
+			PieceIndices[Pieces[Index].get()] = static_cast<int>(Index);
+
+		QJsonArray FramesArray;
+
+		for (const lcAnimateFrame& Frame : It.value().Frames)
+		{
+			QJsonArray PiecesArray;
+
+			for (auto PosIt = Frame.Positions.constBegin(); PosIt != Frame.Positions.constEnd(); ++PosIt)
+			{
+				const auto IndexIt = PieceIndices.constFind(PosIt.key());
+
+				if (IndexIt == PieceIndices.constEnd())
+					continue; // piece no longer exists in the model (deleted since it was captured)
+
+				QJsonObject PieceObject;
+				PieceObject[QLatin1String("index")] = IndexIt.value();
+				PieceObject[QLatin1String("position")] = Vector3ToJson(PosIt.value());
+				PieceObject[QLatin1String("rotation")] = Matrix33ToJson(Frame.Rotations.value(PosIt.key()));
+
+				PiecesArray.append(PieceObject);
+			}
+
+			QJsonObject FrameObject;
+			FrameObject[QLatin1String("pieces")] = PiecesArray;
+
+			if (Frame.HasCamera)
+			{
+				QJsonObject CameraObject;
+				CameraObject[QLatin1String("position")] = Vector3ToJson(Frame.CameraPosition);
+				CameraObject[QLatin1String("target")] = Vector3ToJson(Frame.CameraTarget);
+				CameraObject[QLatin1String("up")] = Vector3ToJson(Frame.CameraUpVector);
+				FrameObject[QLatin1String("camera")] = CameraObject;
+			}
+
+			FramesArray.append(FrameObject);
+		}
+
+		QJsonObject ModelObject;
+		ModelObject[QLatin1String("frames")] = FramesArray;
+		ModelsObject[Model->GetProperties().mFileName] = ModelObject;
+		AnyData = true;
+	}
+
+	const QString AnimateFileName = FileName + QLatin1String(".animate.json");
+
+	if (!AnyData)
+	{
+		QFile::remove(AnimateFileName); // nothing to save - clean up a stale companion file if any
+		return;
+	}
+
+	QJsonObject Root;
+	Root[QLatin1String("models")] = ModelsObject;
+
+	QFile File(AnimateFileName);
+
+	if (File.open(QIODevice::WriteOnly))
+		File.write(QJsonDocument(Root).toJson(QJsonDocument::Compact));
+}
+
+void lcAnimateWidget::LoadAnimationData(Project* CurrentProject, const QString& FileName)
+{
+	if (FileName.isEmpty() || !CurrentProject)
+		return;
+
+	QFile File(FileName + QLatin1String(".animate.json"));
+
+	if (!File.open(QIODevice::ReadOnly))
+		return;
+
+	const QJsonDocument Document = QJsonDocument::fromJson(File.readAll());
+
+	if (!Document.isObject())
+		return;
+
+	const QJsonObject ModelsObject = Document.object().value(QLatin1String("models")).toObject();
+
+	for (const std::unique_ptr<lcModel>& ModelPtr : CurrentProject->GetModels())
+	{
+		lcModel* Model = ModelPtr.get();
+		const QString Key = Model->GetProperties().mFileName;
+
+		if (!ModelsObject.contains(Key))
+			continue;
+
+		const QJsonArray FramesArray = ModelsObject.value(Key).toObject().value(QLatin1String("frames")).toArray();
+
+		if (FramesArray.isEmpty())
+			continue;
+
+		const std::vector<std::unique_ptr<lcPiece>>& Pieces = Model->GetPieces();
+		lcAnimateDocumentState& State = GetState(Model); // ensures a default state exists first
+
+		State.Frames.clear();
+		State.ThumbnailCache.clear();
+		State.AnimateForcedHidden.clear();
+		State.CurrentFrameIndex = 0;
+
+		for (const QJsonValue& FrameValue : FramesArray)
+		{
+			const QJsonObject FrameObject = FrameValue.toObject();
+			lcAnimateFrame Frame;
+
+			for (const QJsonValue& PieceValue : FrameObject.value(QLatin1String("pieces")).toArray())
+			{
+				const QJsonObject PieceObject = PieceValue.toObject();
+				const int Index = PieceObject.value(QLatin1String("index")).toInt(-1);
+
+				if (Index < 0 || static_cast<size_t>(Index) >= Pieces.size())
+					continue; // piece no longer exists (model edited outside the saved animation)
+
+				lcPiece* Piece = Pieces[Index].get();
+				Frame.Positions[Piece] = Vector3FromJson(PieceObject.value(QLatin1String("position")).toArray());
+				Frame.Rotations[Piece] = Matrix33FromJson(PieceObject.value(QLatin1String("rotation")).toArray());
+			}
+
+			if (FrameObject.contains(QLatin1String("camera")))
+			{
+				const QJsonObject CameraObject = FrameObject.value(QLatin1String("camera")).toObject();
+				Frame.CameraPosition = Vector3FromJson(CameraObject.value(QLatin1String("position")).toArray());
+				Frame.CameraTarget = Vector3FromJson(CameraObject.value(QLatin1String("target")).toArray());
+				Frame.CameraUpVector = Vector3FromJson(CameraObject.value(QLatin1String("up")).toArray());
+				Frame.HasCamera = true;
+			}
+
+			State.Frames.push_back(Frame);
+		}
+
+		if (State.Frames.empty())
+			State.Frames.push_back(SnapshotFrame(Model));
+	}
 }

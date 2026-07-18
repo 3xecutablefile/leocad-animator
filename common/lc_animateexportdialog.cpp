@@ -102,6 +102,11 @@ void lcAnimateExportDialog::Accept()
 		return;
 	}
 
+	// Default auto-remove would delete these frames the instant this function returns, including
+	// on the ffmpeg-not-found/ffmpeg-failed paths below that tell the user the PNGs are still
+	// there. Clean up manually instead, only once ffmpeg has actually consumed them successfully.
+	TempDir.setAutoRemove(false);
+
 	const QString FrameDir = (Format == 2) ? OutputPath : TempDir.path();
 	QDir().mkpath(FrameDir);
 
@@ -117,9 +122,13 @@ void lcAnimateExportDialog::Accept()
 	// Start/End refer to - ffmpeg and the PNG sequence don't need to know the original numbering.
 	int OutputNumber = 1;
 
+	// Throwaway for this render-only loop: export doesn't need to remember which pieces it hid
+	// across calls the way the live Animate dock does, each frame here is posed once and discarded.
+	QSet<lcPiece*> ExportForcedHidden;
+
 	for (int FrameIndex = Start - 1; FrameIndex <= End - 1; FrameIndex++, OutputNumber++)
 	{
-		lcPoseAnimateFrame(mModel, mFrames[FrameIndex]);
+		lcPoseAnimateFrame(mModel, mFrames[FrameIndex], ExportForcedHidden);
 
 		const std::vector<QImage> Images = View.GetStepImages(1, 1);
 
@@ -169,6 +178,8 @@ void lcAnimateExportDialog::Accept()
 	}
 
 	QMessageBox::information(this, tr("Export Animation"), tr("Animation saved to:\n%1").arg(OutputPath));
+
+	QDir(FrameDir).removeRecursively(); // ffmpeg has consumed the temp PNGs successfully, clean up
 
 	QDialog::accept();
 }

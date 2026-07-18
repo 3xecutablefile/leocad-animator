@@ -7,6 +7,7 @@
 #include "group.h"
 #include "project.h"
 #include "lc_mainwindow.h"
+#include "lc_animatewidget.h"
 #include "lc_profile.h"
 #include "lc_library.h"
 #include "lc_scene.h"
@@ -189,6 +190,12 @@ lcModel::lcModel(const QString& FileName, Project* Project, bool Preview)
 
 lcModel::~lcModel()
 {
+	// Drop this model's Animate dock state (captured frames, thumbnail cache) now, rather than
+	// letting it linger in lcAnimateWidget's per-model map forever, and rather than risking a
+	// future lcModel reused at this same freed address inheriting stale frame data.
+	if (!mIsPreview && gMainWindow && gMainWindow->GetAnimateWidget())
+		gMainWindow->GetAnimateWidget()->ForgetModel(this);
+
 	if (!mPreviewInsertPieceInfo.empty())
 	{
 		lcPiecesLibrary* Library = lcGetPiecesLibrary();
@@ -3757,6 +3764,17 @@ void lcModel::SetObjectsKeyFrame(const std::vector<lcObject*>& Objects, lcObject
 	{
 		DiscardHistorySequence();
 	}
+}
+
+void lcModel::RunInHistorySequence(const QString& Description, const std::function<void()>& Callback)
+{
+	BeginHistorySequence();
+	BeginEditHistory(lcModelHistoryEditMerge::None);
+
+	Callback();
+
+	EndEditHistory();
+	EndHistorySequence(Description);
 }
 
 void lcModel::SetSelectedPiecesColorIndex(int ColorIndex)

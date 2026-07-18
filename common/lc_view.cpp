@@ -9,6 +9,7 @@
 #include "lc_texture.h"
 #include "piece.h"
 #include "pieceinf.h"
+#include "group.h"
 #include "lc_traintrack.h"
 #include "lc_scene.h"
 #include "lc_context.h"
@@ -2153,9 +2154,19 @@ void lcView::UpdateTrackTool()
 				if (Object && Object->IsPiece() && ObjectSection.Section == LC_PIECE_SECTION_POSITION && Object->IsSelected())
 				{
 					lcPiece* Piece = (lcPiece*)Object;
-					mMouseDownTransform = Piece->mModelWorld;
-					mMouseDownPiece = Piece;
-					NewTrackTool = lcTrackTool::MoveXYZ;
+					lcGroup* Group = Piece->GetGroup();
+
+					// Socket Mode only blocks click-drag-translate for pieces in a Posable minifig
+					// limb group (see lcModel::ShowMinifigDialog) - it must not affect ordinary
+					// piece placement/set building, which relies on this same click-drag path.
+					const bool BlockedBySocketMode = gMainWindow->GetSocketModeEnabled() && Group && Group->mName.startsWith(QLatin1String("Minifig "));
+
+					if (!BlockedBySocketMode)
+					{
+						mMouseDownTransform = Piece->mModelWorld;
+						mMouseDownPiece = Piece;
+						NewTrackTool = lcTrackTool::MoveXYZ;
+					}
 				}
 			}
 		}

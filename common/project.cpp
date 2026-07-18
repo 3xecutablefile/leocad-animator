@@ -8,6 +8,7 @@
 #include "image.h"
 #include "light.h"
 #include "lc_mainwindow.h"
+#include "lc_animatewidget.h"
 #include "lc_view.h"
 #include "lc_library.h"
 #include "lc_application.h"
@@ -487,6 +488,9 @@ bool Project::Load(const QString& FileName, bool ShowErrors)
 
 	mModified = false;
 
+	if (gMainWindow && gMainWindow->GetAnimateWidget())
+		gMainWindow->GetAnimateWidget()->LoadAnimationData(this, FileName);
+
 	return true;
 }
 
@@ -510,6 +514,9 @@ bool Project::Save(const QString& FileName)
 	{
 		SetFileName(FileName);
 		mModified = false;
+
+		if (gMainWindow && gMainWindow->GetAnimateWidget())
+			gMainWindow->GetAnimateWidget()->SaveAnimationData(this, FileName);
 	}
 
 	return Success;

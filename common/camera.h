@@ -172,6 +172,21 @@ public:
 		mUpVector.ChangeKey(UpVector, Step, AddKey);
 	}
 
+	lcVector3 GetPosition() const
+	{
+		return mPosition;
+	}
+
+	lcVector3 GetTargetPosition() const
+	{
+		return mTargetPosition;
+	}
+
+	lcVector3 GetUpVector() const
+	{
+		return mUpVector;
+	}
+
 	float GetOrthoHeight() const
 	{
 		// Compute the FOV/plane intersection radius.

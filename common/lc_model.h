@@ -381,6 +381,11 @@ public:
 	void ScaleSelectedPieces(const float Scale);
 	void TransformSelectedObjects(lcTransformType TransformType, const lcVector3& Transform);
 	void SetObjectsKeyFrame(const std::vector<lcObject*>& Objects, lcObjectPropertyId PropertyId, bool KeyFrame);
+
+	// Generic public entry point for external code (e.g. the Animate dock) that needs undo/redo
+	// and the modified flag to pick up a batch of direct piece edits, without exposing the
+	// protected Begin/EndHistorySequence/Begin/EndEditHistory pair themselves.
+	void RunInHistorySequence(const QString& Description, const std::function<void()>& Callback);
 	void SetSelectedPiecesColorIndex(int ColorIndex);
 	void SetSelectedPiecesStepShow(lcStep Step);
 	void SetSelectedPiecesStepHide(lcStep Step);

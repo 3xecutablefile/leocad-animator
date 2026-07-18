@@ -105,6 +105,19 @@ public:
 		return mAddKeys;
 	}
 
+	// Enforced directly in lcView's mouse-manipulation code (not just by disabling a toolbar
+	// action), since the default Select tool's click-and-drag-a-selected-piece path moves pieces
+	// independently of whichever tool the LC_EDIT_ACTION_MOVE action last switched to.
+	bool GetSocketModeEnabled() const
+	{
+		return mSocketModeEnabled;
+	}
+
+	void SetSocketModeEnabled(bool Enabled)
+	{
+		mSocketModeEnabled = Enabled;
+	}
+
 	float GetMoveXYSnap() const
 	{
 		const float SnapXYTable[] = { 0.0f, 1.0f, 5.0f, 8.0f, 10.0f, 20.0f, 40.0f, 60.0f, 80.0f, 160.0f };
@@ -183,6 +196,11 @@ public:
 	lcPreviewDockWidget* GetPreviewWidget() const
 	{
 		return mPreviewWidget;
+	}
+
+	lcAnimateWidget* GetAnimateWidget() const
+	{
+		return mAnimateWidget;
 	}
 
 	QMenu* GetToolsMenu() const
@@ -351,6 +369,7 @@ protected:
 	QDateTime mLastGamepadUpdate;
 
 	bool mAddKeys;
+	bool mSocketModeEnabled = true;
 	lcTool mTool;
 	lcTransformType mTransformType;
 	bool mMoveSnapEnabled;
