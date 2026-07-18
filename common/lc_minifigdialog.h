@@ -20,6 +20,8 @@ public:
 
 	MinifigWizard* mMinifigWizard;
 
+	bool IsPosable() const;
+
 protected slots:
 	void TemplateComboBoxCurrentTextChanged(const QString& TemplateName);
 	void TemplateSaveButtonClicked();
