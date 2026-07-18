@@ -150,6 +150,11 @@ lcMinifigDialog::~lcMinifigDialog()
 	delete ui;
 }
 
+bool lcMinifigDialog::IsPosable() const
+{
+	return ui->PosableCheckBox->isChecked();
+}
+
 void lcMinifigDialog::UpdateTemplateCombo()
 {
 	QSignalBlocker Blocker(ui->TemplateComboBox);

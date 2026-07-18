@@ -73,6 +73,16 @@
     </widget>
    </item>
    <item>
+    <widget class="QCheckBox" name="PosableCheckBox">
+     <property name="text">
+      <string>Posable (head/torso/arms/legs can be moved independently for animation; a hand always stays attached to its own arm)</string>
+     </property>
+     <property name="checked">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
     <widget class="QDialogButtonBox" name="buttonBox">
      <property name="orientation">
       <enum>Qt::Horizontal</enum>
