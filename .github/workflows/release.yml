@@ -9,7 +9,10 @@ permissions:
 
 jobs:
   build-and-release-macos:
-    runs-on: macos-latest
+    # Pinned rather than macos-latest: that image currently ships an SDK (26.5) ahead of what
+    # Qt 6.8.3's headers were written against, and -Werror turns the resulting implicit-function-
+    # declaration warning in qyieldcpu.h into a hard build failure.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
