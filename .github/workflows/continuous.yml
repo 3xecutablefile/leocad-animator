@@ -25,7 +25,10 @@ jobs:
       run: make -j ${{ steps.cpu-cores.outputs.count }}
 
   build-macos:
-    runs-on: macos-latest
+    # Pinned rather than macos-latest: that image ships an SDK (26.5) that dropped AGL.framework,
+    # which this job's Qt 5.15.2 + QtGamepad build still links against, and separately trips
+    # -Werror on an implicit-function-declaration warning in newer Qt 6 builds. See release.yml.
+    runs-on: macos-14
     steps:
     - uses: actions/checkout@v3
     - name: Install Qt
