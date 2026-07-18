@@ -74,6 +74,8 @@ public slots:
 	void ExportClicked();
 	void SocketModeToggled(bool Checked);
 	void AttachToHandClicked();
+	void MirrorPoseClicked();
+	void WalkCycleClicked();
 
 protected:
 	lcAnimateDocumentState& GetState(lcModel* Model);

@@ -2159,7 +2159,26 @@ void lcView::UpdateTrackTool()
 					// Socket Mode only blocks click-drag-translate for pieces in a Posable minifig
 					// limb group (see lcModel::ShowMinifigDialog) - it must not affect ordinary
 					// piece placement/set building, which relies on this same click-drag path.
-					const bool BlockedBySocketMode = gMainWindow->GetSocketModeEnabled() && Group && Group->mName.startsWith(QLatin1String("Minifig "));
+					// It also must not block moving the WHOLE figure (e.g. walking it forward across
+					// a scene) - only dragging a single limb group in isolation, which would pull it
+					// off its socket. So it only blocks when every currently selected piece belongs to
+					// that one limb group; a selection spanning multiple limb groups (or the rest of
+					// the model) is a root/whole-figure move and is allowed through.
+					bool BlockedBySocketMode = gMainWindow->GetSocketModeEnabled() && Group && Group->mName.startsWith(QLatin1String("Minifig "));
+
+					if (BlockedBySocketMode)
+					{
+						lcModel* ActiveModel = GetActiveModel();
+
+						for (const std::unique_ptr<lcPiece>& OtherPiece : ActiveModel->GetPieces())
+						{
+							if (OtherPiece->IsSelected() && OtherPiece->GetGroup() != Group)
+							{
+								BlockedBySocketMode = false;
+								break;
+							}
+						}
+					}
 
 					if (!BlockedBySocketMode)
 					{
@@ -2584,6 +2603,8 @@ void lcView::OnButtonDown(lcTrackButton TrackButton)
 			    if (ObjectSection.Object)
 				    ActiveModel->RemoveFromSelectionAction({ ObjectSection.Object });
 		    }
+			else if (mMouseModifiers & Qt::AltModifier)
+				ActiveModel->SelectMinifigFamilyAction(ObjectSection.Object);
 			else
 				ActiveModel->SetSelectionAndFocusAction(std::vector<lcObject*>(), ObjectSection.Object, ObjectSection.Section, gMainWindow->GetSelectionMode());
 

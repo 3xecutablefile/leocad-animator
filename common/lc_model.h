@@ -330,6 +330,11 @@ public:
 	void AddToSelectionAction(const std::vector<lcObject*>& Objects);
 	void RemoveFromSelectionAction(const std::vector<lcObject*>& Objects);
 
+	// Selects every piece belonging to the same Posable minifig as Object (all 6 limb-assembly
+	// groups at once, see group.h's mMinifigFamily) - lets a whole minifig be moved in one grab
+	// instead of rubber-band-selecting it. No-op if Object isn't part of a Posable minifig.
+	void SelectMinifigFamilyAction(lcObject* Object);
+
 	void HideSelectedPieces();
 	void HideUnselectedPieces();
 	void UnhideSelectedPieces();

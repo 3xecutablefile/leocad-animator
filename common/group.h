@@ -40,6 +40,13 @@ public:
 	lcGroup* mGroup = nullptr;
 	QString mName;
 
+	// Tags the 6 separate per-limb-assembly groups a Posable minifig is split into (see
+	// lcModel::ShowMinifigDialog) as belonging to the same minifig instance, without making them
+	// an actual parent/child group - that would make GetTopGroup() (and therefore a plain click)
+	// select the whole figure again, defeating independent per-limb posing. Non-minifig groups, and
+	// non-Posable minifigs (which use a single ordinary group already), leave this null.
+	lcGroup* mMinifigFamily = nullptr;
+
 protected:
 	lcGroupId mId = static_cast<lcGroupId>(0);
 

@@ -9,6 +9,7 @@
 #include "object.h"
 #include "piece.h"
 #include "minifig.h"
+#include "group.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -199,6 +200,14 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	AttachToHandButton->setToolTip(tr("Select a hand piece and a holdable accessory (tool, weapon, cup, etc.) to snap the accessory into the hand's grip"));
 	ActionLayout->addWidget(AttachToHandButton);
 
+	QPushButton* MirrorPoseButton = new QPushButton(tr("Mirror Pose"), this);
+	MirrorPoseButton->setToolTip(tr("Select one leg of a Posable minifig to copy its current pose onto the opposite leg"));
+	ActionLayout->addWidget(MirrorPoseButton);
+
+	QPushButton* WalkCycleButton = new QPushButton(tr("Walk Cycle..."), this);
+	WalkCycleButton->setToolTip(tr("Select a Posable minifig and auto-generate an alternating-leg walk cycle across several frames"));
+	ActionLayout->addWidget(WalkCycleButton);
+
 	ActionLayout->addStretch();
 	mExportButton = new QPushButton(tr("Export Animation..."), this);
 	ActionLayout->addWidget(mExportButton);
@@ -225,6 +234,8 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(DuplicateButton, &QPushButton::clicked, this, &lcAnimateWidget::DuplicateClicked);
 	connect(mDeleteButton, &QPushButton::clicked, this, &lcAnimateWidget::DeleteClicked);
 	connect(AttachToHandButton, &QPushButton::clicked, this, &lcAnimateWidget::AttachToHandClicked);
+	connect(MirrorPoseButton, &QPushButton::clicked, this, &lcAnimateWidget::MirrorPoseClicked);
+	connect(WalkCycleButton, &QPushButton::clicked, this, &lcAnimateWidget::WalkCycleClicked);
 	connect(mPlayButton, &QPushButton::clicked, this, &lcAnimateWidget::PlayPauseClicked);
 	connect(mOnionSkinCheck, &QCheckBox::toggled, this, &lcAnimateWidget::OnionSkinToggled);
 	connect(mExportButton, &QPushButton::clicked, this, &lcAnimateWidget::ExportClicked);
@@ -678,6 +689,280 @@ void lcAnimateWidget::AttachToHandClicked()
 	});
 
 	Model->SetCurrentStep(1);
+}
+
+void lcAnimateWidget::MirrorPoseClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+
+	if (!Model)
+		return;
+
+	int Flags = 0;
+	std::vector<lcObject*> Selection;
+	lcObject* Focus = nullptr;
+	Model->GetSelectionInformation(&Flags, Selection, &Focus);
+
+	std::vector<lcPiece*> Pieces;
+
+	for (lcObject* Object : Selection)
+		if (Object->IsPiece())
+			Pieces.push_back((lcPiece*)Object);
+
+	if (Pieces.size() != 1)
+	{
+		QMessageBox::information(this, tr("Mirror Pose"), tr("Select exactly one Right Leg or Left Leg piece of a Posable minifig."));
+		return;
+	}
+
+	lcPiece* SourcePiece = Pieces[0];
+	lcGroup* SourceGroup = SourcePiece->GetGroup();
+	lcGroup* Family = SourceGroup ? SourceGroup->mMinifigFamily : nullptr;
+
+	if (!Family)
+	{
+		QMessageBox::information(this, tr("Mirror Pose"), tr("The selected piece isn't part of a Posable minifig (see the Posable checkbox in the Minifig Wizard)."));
+		return;
+	}
+
+	// Scoped to legs: right/left leg reliably share the same LDraw part on a standard minifig, so
+	// copying the rotation matrix directly (no angle decomposition) is exact and safe. Arms aren't
+	// included since left/right arm are usually different mirrored parts.
+	QString TargetName;
+
+	if (SourceGroup->mName.contains(QLatin1String("Right Leg")))
+		TargetName = QString(SourceGroup->mName).replace(QLatin1String("Right Leg"), QLatin1String("Left Leg"));
+	else if (SourceGroup->mName.contains(QLatin1String("Left Leg")))
+		TargetName = QString(SourceGroup->mName).replace(QLatin1String("Left Leg"), QLatin1String("Right Leg"));
+	else
+	{
+		QMessageBox::information(this, tr("Mirror Pose"), tr("Mirror Pose only supports legs right now - select a Right Leg or Left Leg piece."));
+		return;
+	}
+
+	lcGroup* TargetGroup = nullptr;
+
+	for (const std::unique_ptr<lcGroup>& Candidate : Model->GetGroups())
+	{
+		if (Candidate->mMinifigFamily == Family && Candidate->mName == TargetName)
+		{
+			TargetGroup = Candidate.get();
+			break;
+		}
+	}
+
+	lcPiece* TargetPiece = nullptr;
+
+	if (TargetGroup)
+	{
+		for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+		{
+			if (Piece->GetGroup() == TargetGroup && Piece->mPieceInfo == SourcePiece->mPieceInfo)
+			{
+				TargetPiece = Piece.get();
+				break;
+			}
+		}
+	}
+
+	if (!TargetPiece)
+	{
+		QMessageBox::information(this, tr("Mirror Pose"), tr("Couldn't find a matching piece on the opposite leg (different parts on each side aren't supported)."));
+		return;
+	}
+
+	Model->RunInHistorySequence(tr("Mirror Pose"), [&]()
+	{
+		TargetPiece->SetRotation(SourcePiece->GetRotation(), 1, false);
+		TargetPiece->UpdatePosition(1);
+	});
+}
+
+void lcAnimateWidget::WalkCycleClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+
+	if (!Model)
+		return;
+
+	int Flags = 0;
+	std::vector<lcObject*> Selection;
+	lcObject* Focus = nullptr;
+	Model->GetSelectionInformation(&Flags, Selection, &Focus);
+
+	lcGroup* Family = nullptr;
+
+	for (lcObject* Object : Selection)
+	{
+		if (Object->IsPiece())
+		{
+			lcGroup* Group = ((lcPiece*)Object)->GetGroup();
+
+			if (Group && Group->mMinifigFamily)
+			{
+				Family = Group->mMinifigFamily;
+				break;
+			}
+		}
+	}
+
+	if (!Family)
+	{
+		QMessageBox::information(this, tr("Walk Cycle"), tr("Select (or Alt+click) any part of a Posable minifig first - pose it standing neutrally, since that pose is used as the walk cycle's reference."));
+		return;
+	}
+
+	lcGroup* RightLegGroup = nullptr;
+	lcGroup* LeftLegGroup = nullptr;
+
+	for (const std::unique_ptr<lcGroup>& Candidate : Model->GetGroups())
+	{
+		if (Candidate->mMinifigFamily != Family)
+			continue;
+
+		if (Candidate->mName.contains(QLatin1String("Right Leg")))
+			RightLegGroup = Candidate.get();
+		else if (Candidate->mName.contains(QLatin1String("Left Leg")))
+			LeftLegGroup = Candidate.get();
+	}
+
+	if (!RightLegGroup || !LeftLegGroup)
+	{
+		QMessageBox::information(this, tr("Walk Cycle"), tr("This minifig doesn't have both a Right Leg and a Left Leg group to alternate."));
+		return;
+	}
+
+	std::vector<lcPiece*> RightLegPieces, LeftLegPieces, OtherPieces;
+
+	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+	{
+		lcGroup* Group = Piece->GetGroup();
+
+		if (!Group || Group->mMinifigFamily != Family)
+			continue;
+
+		if (Group == RightLegGroup)
+			RightLegPieces.push_back(Piece.get());
+		else if (Group == LeftLegGroup)
+			LeftLegPieces.push_back(Piece.get());
+		else
+			OtherPieces.push_back(Piece.get());
+	}
+
+	bool Ok = false;
+	const int Steps = QInputDialog::getInt(this, tr("Walk Cycle"), tr("Number of steps (each step is one captured frame):"), 8, 2, 64, 1, &Ok);
+	if (!Ok)
+		return;
+
+	const double StrideAngle = QInputDialog::getDouble(this, tr("Walk Cycle"), tr("Stride angle (degrees each leg swings forward/back from the current pose):"), 25.0, 1.0, 60.0, 1, &Ok);
+	if (!Ok)
+		return;
+
+	const double StepDistance = QInputDialog::getDouble(this, tr("Walk Cycle"), tr("Distance to move forward per step (LDraw units - use a negative number if the figure ends up walking backward):"), 20.0, -500.0, 500.0, 1, &Ok);
+	if (!Ok)
+		return;
+
+	// Reuses MinifigWizard's own angle-to-matrix math (the exact same code the Minifig Wizard's
+	// angle sliders use) instead of re-deriving hip rotation math here - it's already correct for
+	// every leg part in the catalog, including the non-obvious per-part pivot offsets.
+	static MinifigWizard* Wizard = new MinifigWizard();
+
+	Wizard->SetPieceInfo(LC_MFW_RLEG, RightLegPieces.front()->mPieceInfo);
+	Wizard->SetAngle(LC_MFW_RLEG, 0.0f);
+	const lcMatrix44 RLegNeutral = Wizard->mMinifig.Matrices[LC_MFW_RLEG];
+	Wizard->SetAngle(LC_MFW_RLEG, static_cast<float>(StrideAngle));
+	const lcMatrix44 RLegForward = Wizard->mMinifig.Matrices[LC_MFW_RLEG];
+	Wizard->SetAngle(LC_MFW_RLEG, static_cast<float>(-StrideAngle));
+	const lcMatrix44 RLegBack = Wizard->mMinifig.Matrices[LC_MFW_RLEG];
+
+	Wizard->SetPieceInfo(LC_MFW_LLEG, LeftLegPieces.front()->mPieceInfo);
+	Wizard->SetAngle(LC_MFW_LLEG, 0.0f);
+	const lcMatrix44 LLegNeutral = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
+	Wizard->SetAngle(LC_MFW_LLEG, static_cast<float>(StrideAngle));
+	const lcMatrix44 LLegForward = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
+	Wizard->SetAngle(LC_MFW_LLEG, static_cast<float>(-StrideAngle));
+	const lcMatrix44 LLegBack = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
+
+	// A pure "how did the leg move" delta, independent of where in the scene the minifig actually
+	// is (the wizard always computes matrices relative to its own fixed origin) - applying this
+	// delta on top of each piece's CURRENT (start-of-cycle) world matrix reproduces the same swing
+	// wherever the figure has actually been placed/moved to.
+	const lcMatrix44 RLegNeutralInv = lcMatrix44AffineInverse(RLegNeutral);
+	const lcMatrix44 LLegNeutralInv = lcMatrix44AffineInverse(LLegNeutral);
+	const lcMatrix44 RLegForwardDelta = lcMul(RLegForward, RLegNeutralInv);
+	const lcMatrix44 RLegBackDelta = lcMul(RLegBack, RLegNeutralInv);
+	const lcMatrix44 LLegForwardDelta = lcMul(LLegForward, LLegNeutralInv);
+	const lcMatrix44 LLegBackDelta = lcMul(LLegBack, LLegNeutralInv);
+
+	struct lcStartPose { lcVector3 Position; lcMatrix33 Rotation; };
+	QMap<lcPiece*, lcStartPose> StartPoses;
+
+	for (lcPiece* Piece : RightLegPieces)
+		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
+	for (lcPiece* Piece : LeftLegPieces)
+		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
+	for (lcPiece* Piece : OtherPieces)
+		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
+
+	// Walking forward is along the model's +Y axis, matching the leg hip swing axis convention used
+	// throughout minifig.cpp (RotationX for the hip means the foot travels along Y) - if a figure
+	// ends up walking backward, use a negative Step Distance above rather than changing this.
+	const lcVector3 ForwardAxis(0.0f, 1.0f, 0.0f);
+
+	Model->RunInHistorySequence(tr("Walk Cycle"), [&]()
+	{
+		lcAnimateDocumentState& State = GetState(Model);
+		int InsertIndex = State.CurrentFrameIndex;
+
+		for (int Step = 0; Step < Steps; Step++)
+		{
+			const bool RightForward = (Step % 2) == 0;
+			const lcMatrix44& RDelta = RightForward ? RLegForwardDelta : RLegBackDelta;
+			const lcMatrix44& LDelta = RightForward ? LLegBackDelta : LLegForwardDelta;
+			const lcMatrix44 Forward = lcMatrix44Translation(ForwardAxis * static_cast<float>(StepDistance * (Step + 1)));
+
+			for (lcPiece* Piece : RightLegPieces)
+			{
+				const lcStartPose& Start = StartPoses[Piece];
+				const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+				const lcMatrix44 NewMatrix = lcMul(lcMul(RDelta, StartMatrix), Forward);
+
+				Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
+				Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
+				Piece->UpdatePosition(1);
+			}
+
+			for (lcPiece* Piece : LeftLegPieces)
+			{
+				const lcStartPose& Start = StartPoses[Piece];
+				const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+				const lcMatrix44 NewMatrix = lcMul(lcMul(LDelta, StartMatrix), Forward);
+
+				Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
+				Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
+				Piece->UpdatePosition(1);
+			}
+
+			for (lcPiece* Piece : OtherPieces)
+			{
+				const lcStartPose& Start = StartPoses[Piece];
+				const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+				const lcMatrix44 NewMatrix = lcMul(StartMatrix, Forward);
+
+				Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
+				Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
+				Piece->UpdatePosition(1);
+			}
+
+			InsertIndex++;
+			State.Frames.insert(State.Frames.begin() + InsertIndex, SnapshotFrame(Model));
+			ThumbnailCacheOnInsert(State.ThumbnailCache, InsertIndex);
+			State.CurrentFrameIndex = InsertIndex;
+		}
+	});
+
+	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
+	Update();
 }
 
 void lcAnimateWidget::ExportClicked()

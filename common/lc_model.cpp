@@ -4450,6 +4450,32 @@ void lcModel::FocusOrDeselectObjectAction(lcObject* Object, uint32_t Section, lc
 	EndHistorySequence(tr("Selection"));
 }
 
+void lcModel::SelectMinifigFamilyAction(lcObject* Object)
+{
+	if (!Object || !Object->IsPiece())
+		return;
+
+	lcGroup* Group = ((lcPiece*)Object)->GetGroup();
+	lcGroup* Family = Group ? Group->mMinifigFamily : nullptr;
+
+	if (!Family)
+		return;
+
+	std::vector<lcObject*> Objects;
+
+	for (const std::unique_ptr<lcPiece>& Piece : mPieces)
+	{
+		lcGroup* PieceGroup = Piece->GetGroup();
+
+		if (PieceGroup && PieceGroup->mMinifigFamily == Family)
+			Objects.emplace_back(Piece.get());
+	}
+
+	BeginHistorySequence();
+	SetSelectionAndFocus(Objects, Object, LC_PIECE_SECTION_POSITION, lcSelectionMode::Single);
+	EndHistorySequence(tr("Selection"));
+}
+
 void lcModel::SelectAllPiecesAction()
 {
 	BeginHistorySequence();
@@ -5588,6 +5614,10 @@ void lcModel::ShowMinifigDialog()
 		static const char* AssemblyNames[] = { "Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg" };
 		lcGroup* AssemblyGroups[6] = {};
 
+		// The first assembly group created for this minifig becomes the shared family tag every
+		// other assembly group of the same minifig points at (see group.h's mMinifigFamily comment).
+		lcGroup* MinifigFamily = nullptr;
+
 		for (const auto& Entry : PartAssembly)
 		{
 			if (!Minifig.Parts[Entry.PartIndex])
@@ -5596,7 +5626,14 @@ void lcModel::ShowMinifigDialog()
 			lcGroup*& AssemblyGroup = AssemblyGroups[Entry.AssemblyIndex];
 
 			if (!AssemblyGroup)
+			{
 				AssemblyGroup = AddGroup(tr("Minifig %1 #").arg(QString::fromLatin1(AssemblyNames[Entry.AssemblyIndex])), nullptr);
+
+				if (!MinifigFamily)
+					MinifigFamily = AssemblyGroup;
+
+				AssemblyGroup->mMinifigFamily = MinifigFamily;
+			}
 
 			lcPiece* Piece = new lcPiece(Minifig.Parts[Entry.PartIndex]);
 
