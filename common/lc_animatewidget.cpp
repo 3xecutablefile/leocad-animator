@@ -1004,44 +1004,67 @@ void lcAnimateWidget::WalkCycleClicked()
 	const double StrideAngle = StrideSpin->value();
 	const double ArmSwingAngle = ArmSwingSpin->value();
 	const double DirectionDeg = DirSpin->value();
+	const int GaitIndex = GaitCombo->currentIndex();
 
 	// Reuses MinifigWizard's own angle-to-matrix math (the exact same code the Minifig Wizard's
 	// angle sliders use) instead of re-deriving hip rotation math here - it's already correct for
 	// every leg part in the catalog, including the non-obvious per-part pivot offsets.
 	static MinifigWizard* Wizard = new MinifigWizard();
 
-	Wizard->SetPieceInfo(LC_MFW_RLEG, RightLegPieces.front()->mPieceInfo);
-	Wizard->SetAngle(LC_MFW_RLEG, 0.0f);
-	const lcMatrix44 RLegNeutral = Wizard->mMinifig.Matrices[LC_MFW_RLEG];
-	const lcMatrix44 RLegNeutralInv = lcMatrix44AffineInverse(RLegNeutral);
+	// Build piece -> wizard slot mapping by matching mPieceInfo against mSettings[Type].
+	// This ensures multi-joint limb assemblies (arm -> hand) use the correct per-slot
+	// wizard matrices and deltas instead of a single group-level delta for every piece.
+	QHash<PieceInfo*, int> SlotForInfo;
+	for (int Type = 0; Type < LC_MFW_NUMITEMS; Type++)
+		for (const lcMinifigPieceInfo& Entry : Wizard->mSettings[Type])
+			if (Entry.Info)
+				SlotForInfo[Entry.Info] = Type;
 
-	Wizard->SetPieceInfo(LC_MFW_LLEG, LeftLegPieces.front()->mPieceInfo);
-	Wizard->SetAngle(LC_MFW_LLEG, 0.0f);
-	const lcMatrix44 LLegNeutral = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
-	const lcMatrix44 LLegNeutralInv = lcMatrix44AffineInverse(LLegNeutral);
-
-	lcMatrix44 RArmDelta = lcMatrix44Identity();
-	lcMatrix44 LArmDelta = lcMatrix44Identity();
-	lcMatrix44 RArmNeutralMat = lcMatrix44Identity();
-	lcMatrix44 RArmNeutralInvMat = lcMatrix44Identity();
-	lcMatrix44 LArmNeutralMat = lcMatrix44Identity();
-	lcMatrix44 LArmNeutralInvMat = lcMatrix44Identity();
-
-	if (!RightArmPieces.empty())
+	QHash<lcPiece*, int> PieceToSlot;
+	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
 	{
-		Wizard->SetPieceInfo(LC_MFW_RARM, RightArmPieces.front()->mPieceInfo);
-		Wizard->SetAngle(LC_MFW_RARM, 0.0f);
-		RArmNeutralMat = Wizard->mMinifig.Matrices[LC_MFW_RARM];
-		RArmNeutralInvMat = lcMatrix44AffineInverse(RArmNeutralMat);
+		lcGroup* Group = Piece->GetGroup();
+		if (!Group || Group->mMinifigFamily != Family)
+			continue;
+		auto It = SlotForInfo.constFind(Piece->mPieceInfo);
+		if (It != SlotForInfo.constEnd())
+			PieceToSlot[Piece.get()] = It.value();
 	}
 
-	if (!LeftArmPieces.empty())
+	// Set piece info on the wizard for every slot this minifig uses.
+	QSet<int> UsedSlots;
+	for (auto It = PieceToSlot.constBegin(); It != PieceToSlot.constEnd(); ++It)
+		UsedSlots.insert(It.value());
+
+	for (int Type : UsedSlots)
 	{
-		Wizard->SetPieceInfo(LC_MFW_LARM, LeftArmPieces.front()->mPieceInfo);
-		Wizard->SetAngle(LC_MFW_LARM, 0.0f);
-		LArmNeutralMat = Wizard->mMinifig.Matrices[LC_MFW_LARM];
-		LArmNeutralInvMat = lcMatrix44AffineInverse(LArmNeutralMat);
+		for (auto It = PieceToSlot.constBegin(); It != PieceToSlot.constEnd(); ++It)
+		{
+			if (It.value() == Type)
+			{
+				Wizard->SetPieceInfo(Type, It.key()->mPieceInfo);
+				break;
+			}
+		}
 	}
+
+	// Zero all active angles to get neutral matrices.
+	for (int Type : { LC_MFW_RLEG, LC_MFW_LLEG, LC_MFW_RARM, LC_MFW_LARM,
+		LC_MFW_RHAND, LC_MFW_LHAND })
+	{
+		if (UsedSlots.contains(Type))
+			Wizard->SetAngle(Type, 0.0f);
+	}
+
+	// Read neutral matrices and inverses for all used slots.
+	QHash<int, lcMatrix44> SlotNeutral, SlotNeutralInv;
+	for (int Type : UsedSlots)
+	{
+		SlotNeutral[Type] = Wizard->mMinifig.Matrices[Type];
+		SlotNeutralInv[Type] = lcMatrix44AffineInverse(SlotNeutral[Type]);
+	}
+
+	const lcMatrix44 RLegNeutral = SlotNeutral.value(LC_MFW_RLEG);
 
 	// Calculate step distance from the stride angle and the figure's leg geometry.
 	const float HipOffset = 44.0f;
@@ -1080,80 +1103,51 @@ void lcAnimateWidget::WalkCycleClicked()
 	for (int Step = 0; Step < Steps; Step++)
 	{
 		const float Phase = LC_2PI * static_cast<float>(Step) / static_cast<float>(Steps - 1);
-		const float RightAngle = static_cast<float>(StrideAngle) * sinf(Phase);
+		const float Wave = sinf(Phase);
+		// Gait-specific shaping: Walk = smooth, Jog = peaky, Run = asymmetric quick push-off
+		const float GaitWave = (GaitIndex == 2) ? sinf(Phase + 0.25f * Wave) :
+			                   (GaitIndex == 1) ? 0.85f * Wave + 0.15f * sinf(Phase * 2.0f) :
+			                   Wave;
+		const float RightAngle = static_cast<float>(StrideAngle) * GaitWave;
 		const float LeftAngle = -RightAngle;
 
 		Wizard->SetAngle(LC_MFW_RLEG, RightAngle);
-		const lcMatrix44 RDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_RLEG], RLegNeutralInv);
-
 		Wizard->SetAngle(LC_MFW_LLEG, LeftAngle);
-		const lcMatrix44 LDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_LLEG], LLegNeutralInv);
 
-		// Arms swing opposite to legs (right arm back when right leg forward)
-		if (!RightArmPieces.empty())
-		{
-			Wizard->SetAngle(LC_MFW_RARM, -static_cast<float>(ArmSwingAngle) * sinf(Phase));
-			RArmDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_RARM], RArmNeutralInvMat);
-		}
+		if (UsedSlots.contains(LC_MFW_RARM))
+			Wizard->SetAngle(LC_MFW_RARM, -static_cast<float>(ArmSwingAngle) * GaitWave);
+		if (UsedSlots.contains(LC_MFW_LARM))
+			Wizard->SetAngle(LC_MFW_LARM, static_cast<float>(ArmSwingAngle) * GaitWave);
 
-		if (!LeftArmPieces.empty())
-		{
-			Wizard->SetAngle(LC_MFW_LARM, static_cast<float>(ArmSwingAngle) * sinf(Phase));
-			LArmDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_LARM], LArmNeutralInvMat);
-		}
+		// Read per-slot deltas from the wizard after all angles are set.
+		QHash<int, lcMatrix44> SlotDelta;
+		for (int Type : UsedSlots)
+			SlotDelta[Type] = lcMul(Wizard->mMinifig.Matrices[Type], SlotNeutralInv[Type]);
 
 		const lcMatrix44 Forward = lcMatrix44Translation(ForwardAxis * static_cast<float>(StepDistance * (Step + 1)));
 
-		for (lcPiece* Piece : RightLegPieces)
+		auto ApplyPose = [&](lcPiece* Piece, int FallbackSlot)
 		{
 			const lcStartPose& Start = StartPoses[Piece];
 			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
-			const lcMatrix44 NewMatrix = lcMul(lcMul(RDelta, StartMatrix), Forward);
-
+			auto It = PieceToSlot.constFind(Piece);
+			const int Slot = (It != PieceToSlot.constEnd()) ? It.value() : FallbackSlot;
+			const lcMatrix44 NewMatrix = lcMul(lcMul(SlotDelta.value(Slot), StartMatrix), Forward);
 			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
 			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
 			Piece->UpdatePosition(1);
-		}
+		};
 
-		for (lcPiece* Piece : LeftLegPieces)
-		{
-			const lcStartPose& Start = StartPoses[Piece];
-			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
-			const lcMatrix44 NewMatrix = lcMul(lcMul(LDelta, StartMatrix), Forward);
-
-			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
-			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
-			Piece->UpdatePosition(1);
-		}
-
-		for (lcPiece* Piece : RightArmPieces)
-		{
-			const lcStartPose& Start = StartPoses[Piece];
-			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
-			const lcMatrix44 NewMatrix = lcMul(lcMul(RArmDelta, StartMatrix), Forward);
-
-			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
-			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
-			Piece->UpdatePosition(1);
-		}
-
-		for (lcPiece* Piece : LeftArmPieces)
-		{
-			const lcStartPose& Start = StartPoses[Piece];
-			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
-			const lcMatrix44 NewMatrix = lcMul(lcMul(LArmDelta, StartMatrix), Forward);
-
-			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
-			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
-			Piece->UpdatePosition(1);
-		}
+		for (lcPiece* Piece : RightLegPieces) ApplyPose(Piece, LC_MFW_RLEG);
+		for (lcPiece* Piece : LeftLegPieces) ApplyPose(Piece, LC_MFW_LLEG);
+		for (lcPiece* Piece : RightArmPieces) ApplyPose(Piece, LC_MFW_RARM);
+		for (lcPiece* Piece : LeftArmPieces) ApplyPose(Piece, LC_MFW_LARM);
 
 		for (lcPiece* Piece : OtherPieces)
 		{
 			const lcStartPose& Start = StartPoses[Piece];
 			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
 			const lcMatrix44 NewMatrix = lcMul(StartMatrix, Forward);
-
 			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
 			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
 			Piece->UpdatePosition(1);

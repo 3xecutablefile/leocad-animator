@@ -262,6 +262,14 @@ not re-ask):
 5. **Keyframe placement**: `AddKeyframeClicked` now uses `mTimelineWidget->GetCurrentTime()`.
 6. **Disclosure**: arm swing and projection math algebraically sound but not visually verified. Same risk as Walk Cycle.
 
+### COMPLETED: Per-slot wizard mapping (hands follow arms in walk cycle)
+
+Replaced group-level delta approach with per-piece wizard slot mapping. `WalkCycleClicked` now builds a `QHash<PieceInfo*, int>` from `Wizard->mSettings[Type]` to map each minifig piece to its correct wizard slot (RARM, RHAND, RLEG, etc.). Sets piece info for ALL used slots, computes per-slot neutral matrices, and applies per-slot deltas in the main loop. This ensures hands follow arms through the wizard's multi-joint chain (arm→hand) instead of getting a single group-level delta. Algebraically sound but not visually verified.
+
+### COMPLETED: Gait-specific phase warping
+
+Walk = pure sine (smooth symmetric), Jog = peaky (adds second harmonic), Run = asymmetric (phase modulation via `sinf(Phase + 0.25*sinf(Phase))` for quicker push-off, longer recovery). All three preserve the same amplitude/stride angle but change the motion TIMING profile.
+
 ## Session housekeeping notes
 
 - User's memory system already has repo-specific notes at
