@@ -682,6 +682,7 @@ void lcMainWindow::CreateToolBars()
 	mTimeToolBar->addAction(mActions[LC_VIEW_TIME_NEXT]);
 	mTimeToolBar->addAction(mActions[LC_VIEW_TIME_LAST]);
 	mTimeToolBar->addAction(mActions[LC_VIEW_TIME_ADD_KEYS]);
+	mTimeToolBar->setVisible(false); // superseded by the Animate dock's filmstrip/capture controls
 
 	mToolsToolBar = addToolBar(tr("Tools"));
 	mToolsToolBar->setObjectName("ToolsToolbar");
@@ -794,6 +795,8 @@ void lcMainWindow::CreateToolBars()
 
 	mTimelineToolBar->setWidget(mTimelineWidget);
 	addDockWidget(Qt::RightDockWidgetArea, mTimelineToolBar);
+	// Kept visible: doubles as a piece outliner (select+delete parts that are hard to click
+	// directly in the 3D view, e.g. overlapping minifig parts), not just step navigation.
 
 	mAnimateToolBar = new QDockWidget(tr("Animate"), this);
 	mAnimateToolBar->setObjectName("AnimateToolbar");
@@ -2171,7 +2174,7 @@ void lcMainWindow::UpdateCurrentStep()
 	mActions[LC_VIEW_TIME_NEXT]->setEnabled(CurrentStep < LC_STEP_MAX);
 	mActions[LC_VIEW_TIME_LAST]->setEnabled(CurrentStep != LastStep);
 
-	mStatusTimeLabel->setText(QString(tr("Step %1")).arg(QString::number(CurrentStep)));
+	mStatusTimeLabel->setText(QString(tr("Frame %1")).arg(QString::number(CurrentStep)));
 
 	mAnimateWidget->Update();
 }
