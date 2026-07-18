@@ -2,7 +2,7 @@ name: Build and Release
 
 on:
   push:
-    branches: [ "master", "animate-keyframe-system-1337" ]
+    branches: [ "master" ]
 
 permissions:
   contents: write
