@@ -1,0 +1,74 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ "master", "animate-keyframe-system-1337" ]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-macos:
+    # Pinned rather than macos-latest: that image currently ships an SDK (26.5) ahead of what
+    # Qt 6.8.3's headers were written against, and -Werror turns the resulting implicit-function-
+    # declaration warning in qyieldcpu.h into a hard build failure.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+
+      - name: Get number of CPU cores
+        uses: SimenB/github-actions-cpu-cores@v1
+        id: cpu-cores
+
+      - name: Cache parts library
+        uses: actions/cache@v4
+        id: cache-library
+        with:
+          path: library.bin
+          key: library-25.08
+
+      - name: Download parts library
+        if: steps.cache-library.outputs.cache-hit != 'true'
+        run: |
+          curl -sL https://github.com/leozide/leocad/releases/download/v25.09/Library-25.08.zip -o library.zip
+          unzip -o library.zip
+
+      - name: Cache POV-Ray
+        uses: actions/cache@v4
+        id: cache-povray
+        with:
+          path: povray
+          key: povray-continuous
+
+      - name: Download POV-Ray
+        if: steps.cache-povray.outputs.cache-hit != 'true'
+        run: |
+          curl -sL https://github.com/leozide/povray/releases/download/continuous/povray -o povray
+          chmod +x povray
+
+      - name: Build
+        run: |
+          qmake -early QMAKE_DEFAULT_LIBDIRS=$(xcrun -show-sdk-path)/usr/lib
+          make -j ${{ steps.cpu-cores.outputs.count }}
+
+      - name: Package
+        run: |
+          cd build/release
+          zip -r -y ../../StopMotionDigital-macOS.zip StopMotionDigital.app
+
+      - name: Publish rolling release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: continuous
+          name: Continuous Build
+          body: Automatically built from the latest push to ${{ github.ref_name }} (${{ github.sha }}). Not a stable release.
+          prerelease: true
+          allowUpdates: true
+          removeArtifacts: true
+          artifacts: StopMotionDigital-macOS.zip
+          token: ${{ secrets.GITHUB_TOKEN }}

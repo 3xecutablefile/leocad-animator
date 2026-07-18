@@ -12,6 +12,7 @@ class lcQPartsTree;
 class lcColorList;
 class lcPropertiesWidget;
 class lcTimelineWidget;
+class lcAnimateWidget;
 class lcElidedLabel;
 enum class lcRenderDialogMode;
 
@@ -374,12 +375,14 @@ protected:
 	QDockWidget* mColorsToolBar;
 	QDockWidget* mPropertiesToolBar;
 	QDockWidget* mTimelineToolBar;
+	QDockWidget* mAnimateToolBar;
 
 	lcPartSelectionWidget* mPartSelectionWidget;
 	lcColorList* mColorList;
 	QToolButton* mColorButton;
 	lcPropertiesWidget* mPropertiesWidget;
 	lcTimelineWidget* mTimelineWidget;
+	lcAnimateWidget* mAnimateWidget;
 	QLineEdit* mTransformXEdit;
 	QLineEdit* mTransformYEdit;
 	QLineEdit* mTransformZEdit;

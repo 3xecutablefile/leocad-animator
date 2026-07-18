@@ -261,6 +261,16 @@ public:
 		mRotation.ChangeKey(Rotation, Step, AddKey);
 	}
 
+	lcVector3 GetPosition() const
+	{
+		return mPosition;
+	}
+
+	lcMatrix33 GetRotation() const
+	{
+		return mRotation;
+	}
+
 	lcVector3 GetRotationCenter() const;
 	lcMatrix33 GetRelativeRotation() const;
 

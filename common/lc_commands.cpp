@@ -1145,6 +1145,13 @@ const lcCommand gCommands[] =
 		QT_TRANSLATE_NOOP("Status", "Toggle the Preview Toolbar"),
 		""
 	},
+	// LC_VIEW_TOOLBAR_ANIMATE
+	{
+		QT_TRANSLATE_NOOP("Action", "View.Toolbars.Animate"),
+		QT_TRANSLATE_NOOP("Menu", "Animate"),
+		QT_TRANSLATE_NOOP("Status", "Toggle the Animate Toolbar"),
+		""
+	},
 	// LC_VIEW_FULLSCREEN
 	{
 		QT_TRANSLATE_NOOP("Action", "View.FullScreen"),
