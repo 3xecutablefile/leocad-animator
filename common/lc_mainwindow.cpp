@@ -1410,7 +1410,7 @@ void lcMainWindow::ShowSelectDialog()
 	
 	if (ActiveModel->GetPieces().empty() && ActiveModel->GetCameras().empty() && ActiveModel->GetLights().empty())
 	{
-		QMessageBox::information(this, tr("LeoCAD"), tr("Nothing to select."));
+		QMessageBox::information(this, tr("StopMotionDigital"), tr("Nothing to select."));
 		return;
 	}
 
@@ -2522,9 +2522,9 @@ void lcMainWindow::ShowMergeDialog()
 	}
 
 	if (ModelCount == 1)
-		QMessageBox::information(this, tr("LeoCAD"), tr("Merged 1 submodel."));
+		QMessageBox::information(this, tr("StopMotionDigital"), tr("Merged 1 submodel."));
 	else
-		QMessageBox::information(this, tr("LeoCAD"), tr("Merged %1 submodels.").arg(ModelCount));
+		QMessageBox::information(this, tr("StopMotionDigital"), tr("Merged %1 submodels.").arg(ModelCount));
 
 	UpdateModels();
 }

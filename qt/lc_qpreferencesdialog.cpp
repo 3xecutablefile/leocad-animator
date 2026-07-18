@@ -319,7 +319,7 @@ void lcPreferencesDialog::accept()
 	int gridLineSpacing = ui->gridLineSpacing->text().toInt();
 	if (gridLineSpacing < 1)
 	{
-		QMessageBox::information(this, "LeoCAD", tr("Grid spacing must be greater than 0."));
+		QMessageBox::information(this, "StopMotionDigital", tr("Grid spacing must be greater than 0."));
 		return;
 	}
 
@@ -877,7 +877,7 @@ void lcPreferencesDialog::DeleteCategoryClicked()
 		return;
 
 	QString question = tr("Are you sure you want to delete the category '%1'?").arg(mOptions->Categories[categoryIndex].Name);
-	if (QMessageBox::question(this, "LeoCAD", question, QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+	if (QMessageBox::question(this, "StopMotionDigital", question, QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
 		return;
 
 	mOptions->CategoriesModified = true;
@@ -897,7 +897,7 @@ void lcPreferencesDialog::ImportCategoriesClicked()
 	std::vector<lcLibraryCategory> Categories;
 	if (!lcLoadCategories(FileName, Categories))
 	{
-		QMessageBox::warning(this, "LeoCAD", tr("Error loading categories file."));
+		QMessageBox::warning(this, "StopMotionDigital", tr("Error loading categories file."));
 		return;
 	}
 
@@ -915,14 +915,14 @@ void lcPreferencesDialog::ExportCategoriesClicked()
 
 	if (!lcSaveCategories(FileName, mOptions->Categories))
 	{
-		QMessageBox::warning(this, "LeoCAD", tr("Error saving categories file."));
+		QMessageBox::warning(this, "StopMotionDigital", tr("Error saving categories file."));
 		return;
 	}
 }
 
 void lcPreferencesDialog::ResetCategoriesClicked()
 {
-	if (QMessageBox::question(this, "LeoCAD", tr("Are you sure you want to load the default categories?"), QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+	if (QMessageBox::question(this, "StopMotionDigital", tr("Are you sure you want to load the default categories?"), QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
 		return;
 
 	lcResetCategories(mOptions->Categories);
@@ -1189,7 +1189,7 @@ void lcPreferencesDialog::ShortcutsImportClicked()
 	lcKeyboardShortcuts Shortcuts;
 	if (!Shortcuts.Load(FileName))
 	{
-		QMessageBox::warning(this, "LeoCAD", tr("Error loading keyboard shortcuts file."));
+		QMessageBox::warning(this, "StopMotionDigital", tr("Error loading keyboard shortcuts file."));
 		return;
 	}
 
@@ -1208,14 +1208,14 @@ void lcPreferencesDialog::ShortcutsExportClicked()
 
 	if (!mOptions->KeyboardShortcuts.Save(FileName))
 	{
-		QMessageBox::warning(this, "LeoCAD", tr("Error saving keyboard shortcuts file."));
+		QMessageBox::warning(this, "StopMotionDigital", tr("Error saving keyboard shortcuts file."));
 		return;
 	}
 }
 
 void lcPreferencesDialog::ShortcutsResetClicked()
 {
-	if (QMessageBox::question(this, "LeoCAD", tr("Are you sure you want to load the default keyboard shortcuts?"), QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+	if (QMessageBox::question(this, "StopMotionDigital", tr("Are you sure you want to load the default keyboard shortcuts?"), QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
 		return;
 
 	mOptions->KeyboardShortcuts.Reset();
@@ -1381,7 +1381,7 @@ void lcPreferencesDialog::MouseImportButtonClicked()
 	lcMouseShortcuts Shortcuts;
 	if (!Shortcuts.Load(FileName))
 	{
-		QMessageBox::warning(this, "LeoCAD", tr("Error loading mouse shortcuts file."));
+		QMessageBox::warning(this, "StopMotionDigital", tr("Error loading mouse shortcuts file."));
 		return;
 	}
 
@@ -1400,12 +1400,12 @@ void lcPreferencesDialog::MouseExportButtonClicked()
 		return;
 
 	if (!mOptions->MouseShortcuts.Save(FileName))
-		QMessageBox::warning(this, "LeoCAD", tr("Error saving mouse shortcuts file."));
+		QMessageBox::warning(this, "StopMotionDigital", tr("Error saving mouse shortcuts file."));
 }
 
 void lcPreferencesDialog::MouseResetClicked()
 {
-	if (QMessageBox::question(this, "LeoCAD", tr("Are you sure you want to load the default mouse shortcuts?"), QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+	if (QMessageBox::question(this, "StopMotionDigital", tr("Are you sure you want to load the default mouse shortcuts?"), QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
 		return;
 
 	mOptions->MouseShortcuts.Reset();

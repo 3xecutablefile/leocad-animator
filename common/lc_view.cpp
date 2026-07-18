@@ -731,7 +731,7 @@ std::vector<QImage> lcView::GetStepImages(lcStep Start, lcStep End)
 
 	if (!BeginRenderToImage(mWidth, mHeight))
 	{
-		QMessageBox::warning(gMainWindow, tr("LeoCAD"), tr("Error creating images."));
+		QMessageBox::warning(gMainWindow, tr("StopMotionDigital"), tr("Error creating images."));
 		return Images;
 	}
 

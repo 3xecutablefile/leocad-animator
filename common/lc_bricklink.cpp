@@ -71,7 +71,7 @@ void lcExportBrickLink(const QString& SaveFileName, const lcPartsList& PartsList
 
 	if (!BrickLinkFile.Open(QIODevice::WriteOnly))
 	{
-		QMessageBox::warning(gMainWindow, QObject::tr("LeoCAD"), QObject::tr("Could not open file '%1' for writing.").arg(SaveFileName));
+		QMessageBox::warning(gMainWindow, QObject::tr("StopMotionDigital"), QObject::tr("Could not open file '%1' for writing.").arg(SaveFileName));
 		return;
 	}
 
