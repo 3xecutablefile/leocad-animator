@@ -7,6 +7,7 @@
 #include "project.h"
 #include "object.h"
 #include "piece.h"
+#include "minifig.h"
 
 static const int THUMBNAIL_WIDTH = 96;
 static const int THUMBNAIL_HEIGHT = 72;
@@ -99,6 +100,11 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	mDeleteButton = new QPushButton(tr("Delete Frame"), this);
 	ActionLayout->addWidget(DuplicateButton);
 	ActionLayout->addWidget(mDeleteButton);
+
+	QPushButton* AttachToHandButton = new QPushButton(tr("Attach to Hand"), this);
+	AttachToHandButton->setToolTip(tr("Select a hand piece and a holdable accessory (tool, weapon, cup, etc.) to snap the accessory into the hand's grip"));
+	ActionLayout->addWidget(AttachToHandButton);
+
 	ActionLayout->addStretch();
 	mExportButton = new QPushButton(tr("Export Animation..."), this);
 	ActionLayout->addWidget(mExportButton);
@@ -124,6 +130,7 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(mCaptureButton, &QPushButton::clicked, this, &lcAnimateWidget::CaptureClicked);
 	connect(DuplicateButton, &QPushButton::clicked, this, &lcAnimateWidget::DuplicateClicked);
 	connect(mDeleteButton, &QPushButton::clicked, this, &lcAnimateWidget::DeleteClicked);
+	connect(AttachToHandButton, &QPushButton::clicked, this, &lcAnimateWidget::AttachToHandClicked);
 	connect(mPlayButton, &QPushButton::clicked, this, &lcAnimateWidget::PlayPauseClicked);
 	connect(mOnionSkinCheck, &QCheckBox::toggled, this, &lcAnimateWidget::OnionSkinToggled);
 	connect(mExportButton, &QPushButton::clicked, this, &lcAnimateWidget::ExportClicked);
@@ -155,6 +162,15 @@ lcAnimateFrame lcAnimateWidget::SnapshotFrame(lcModel* Model) const
 
 	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
 	{
+		// Skip pieces currently hidden by lcPoseAnimateFrame (i.e. not part of whatever frame is
+		// actually posed right now). Without this, RefreshFilmstrip/RefreshOnionSkin's "remember
+		// the live state, render some other frame's thumbnails, then restore it" dance would
+		// snapshot every piece unconditionally and restore by un-hiding all of them - silently
+		// undoing the hide that just made a later-added piece correctly disappear from earlier
+		// frames.
+		if (Piece->IsHidden())
+			continue;
+
 		Frame.Positions[Piece.get()] = Piece->GetPosition();
 		Frame.Rotations[Piece.get()] = Piece->GetRotation();
 	}
@@ -430,6 +446,84 @@ void lcAnimateWidget::SocketModeToggled(bool Checked)
 
 	if (Checked && gMainWindow->GetTool() == lcTool::Move)
 		gMainWindow->SetTool(lcTool::Rotate);
+}
+
+static const lcMinifigPieceInfo* FindMinifigPieceEntry(const std::vector<lcMinifigPieceInfo>& List, PieceInfo* Info)
+{
+	for (const lcMinifigPieceInfo& Entry : List)
+		if (Entry.Info == Info)
+			return &Entry;
+
+	return nullptr;
+}
+
+void lcAnimateWidget::AttachToHandClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+
+	if (!Model)
+		return;
+
+	int Flags = 0;
+	std::vector<lcObject*> Selection;
+	lcObject* Focus = nullptr;
+	Model->GetSelectionInformation(&Flags, Selection, &Focus);
+
+	std::vector<lcPiece*> Pieces;
+
+	for (lcObject* Object : Selection)
+		if (Object->IsPiece())
+			Pieces.push_back((lcPiece*)Object);
+
+	if (Pieces.size() != 2)
+	{
+		QMessageBox::information(this, tr("Attach to Hand"), tr("Select exactly one hand piece and one accessory piece."));
+		return;
+	}
+
+	// Lazily created and kept alive for the app's lifetime just to reuse its parsed minifig.ini
+	// hand/accessory offset tables (the same authoritative data the Minifig Wizard itself uses) -
+	// avoids re-implementing that parsing here.
+	static MinifigWizard* Wizard = new MinifigWizard();
+
+	lcPiece* HandPiece = nullptr;
+	lcPiece* AccessoryPiece = nullptr;
+	const lcMinifigPieceInfo* AccessoryEntry = nullptr;
+
+	for (int Index = 0; Index < 2 && !HandPiece; Index++)
+	{
+		lcPiece* Piece = Pieces[Index];
+		lcPiece* Other = Pieces[1 - Index];
+
+		if (FindMinifigPieceEntry(Wizard->mSettings[LC_MFW_RHAND], Piece->mPieceInfo))
+		{
+			HandPiece = Piece;
+			AccessoryPiece = Other;
+			// ponytail: always uses the right-hand offset table. Almost every holdable accessory
+			// uses an identity offset that's the same for either hand; only a handful of
+			// oddly-shaped items (animal figures, etc.) differ, and those would need a Left/Right
+			// choice here to be exact.
+			AccessoryEntry = FindMinifigPieceEntry(Wizard->mSettings[LC_MFW_RHANDA], Other->mPieceInfo);
+		}
+	}
+
+	if (!HandPiece || !AccessoryEntry)
+	{
+		QMessageBox::information(this, tr("Attach to Hand"), tr("Couldn't recognize one selected piece as a hand and the other as something a hand can hold."));
+		return;
+	}
+
+	const lcMatrix44 HandWorldMatrix(HandPiece->GetRotation(), HandPiece->GetPosition());
+	const lcMatrix44 AccessoryWorldMatrix = lcMul(AccessoryEntry->Offset, HandWorldMatrix);
+
+	AccessoryPiece->SetPosition(AccessoryWorldMatrix.GetTranslation(), 1, false);
+	AccessoryPiece->SetRotation(lcMatrix33(AccessoryWorldMatrix), 1, false);
+	AccessoryPiece->UpdatePosition(1);
+
+	if (lcGroup* HandGroup = HandPiece->GetGroup())
+		AccessoryPiece->SetGroup(HandGroup);
+
+	Model->SetCurrentStep(1);
 }
 
 void lcAnimateWidget::ExportClicked()

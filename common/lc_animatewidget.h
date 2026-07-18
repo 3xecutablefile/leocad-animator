@@ -43,6 +43,7 @@ public slots:
 	void OnionSkinToggled(bool Checked);
 	void ExportClicked();
 	void SocketModeToggled(bool Checked);
+	void AttachToHandClicked();
 
 protected:
 	void EnsureInitialized(lcModel* Model);
