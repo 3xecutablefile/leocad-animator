@@ -59,6 +59,7 @@ void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame, QSet<lcPiec
 				Camera->SetPosition(Frame.CameraPosition, 1, false);
 				Camera->SetTargetPosition(Frame.CameraTarget, 1, false);
 				Camera->SetUpVector(Frame.CameraUpVector, 1, false);
+				Camera->SetProjection(Frame.CameraProjection);
 				Camera->UpdatePosition(1);
 			}
 		}
@@ -342,6 +343,7 @@ lcAnimateFrame lcAnimateWidget::SnapshotFrame(lcModel* Model) const
 			Frame.CameraPosition = Camera->GetPosition();
 			Frame.CameraTarget = Camera->GetTargetPosition();
 			Frame.CameraUpVector = Camera->GetUpVector();
+			Frame.CameraProjection = Camera->GetProjection();
 			Frame.HasCamera = true;
 		}
 	}
@@ -867,6 +869,8 @@ void lcAnimateWidget::WalkCycleClicked()
 
 	lcGroup* RightLegGroup = nullptr;
 	lcGroup* LeftLegGroup = nullptr;
+	lcGroup* RightArmGroup = nullptr;
+	lcGroup* LeftArmGroup = nullptr;
 
 	for (const std::unique_ptr<lcGroup>& Candidate : Model->GetGroups())
 	{
@@ -877,6 +881,10 @@ void lcAnimateWidget::WalkCycleClicked()
 			RightLegGroup = Candidate.get();
 		else if (Candidate->mName.contains(QLatin1String("Left Leg")))
 			LeftLegGroup = Candidate.get();
+		else if (Candidate->mName.contains(QLatin1String("Right Arm")))
+			RightArmGroup = Candidate.get();
+		else if (Candidate->mName.contains(QLatin1String("Left Arm")))
+			LeftArmGroup = Candidate.get();
 	}
 
 	if (!RightLegGroup || !LeftLegGroup)
@@ -885,7 +893,7 @@ void lcAnimateWidget::WalkCycleClicked()
 		return;
 	}
 
-	std::vector<lcPiece*> RightLegPieces, LeftLegPieces, OtherPieces;
+	std::vector<lcPiece*> RightLegPieces, LeftLegPieces, RightArmPieces, LeftArmPieces, OtherPieces;
 
 	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
 	{
@@ -898,6 +906,10 @@ void lcAnimateWidget::WalkCycleClicked()
 			RightLegPieces.push_back(Piece.get());
 		else if (Group == LeftLegGroup)
 			LeftLegPieces.push_back(Piece.get());
+		else if (RightArmGroup && Group == RightArmGroup)
+			RightArmPieces.push_back(Piece.get());
+		else if (LeftArmGroup && Group == LeftArmGroup)
+			LeftArmPieces.push_back(Piece.get());
 		else
 			OtherPieces.push_back(Piece.get());
 	}
@@ -923,10 +935,21 @@ void lcAnimateWidget::WalkCycleClicked()
 	StrideSpin->setDecimals(0);
 	Form->addRow(tr("Stride angle:"), StrideSpin);
 
-	QSpinBox* StepsSpin = new QSpinBox(&Dialog);
-	StepsSpin->setRange(4, 64);
-	StepsSpin->setSuffix(tr(" frames"));
-	Form->addRow(tr("Duration:"), StepsSpin);
+	QDoubleSpinBox* ArmSwingSpin = new QDoubleSpinBox(&Dialog);
+	ArmSwingSpin->setRange(0.0, 60.0);
+	ArmSwingSpin->setValue(15.0);
+	ArmSwingSpin->setSuffix(tr(" deg"));
+	ArmSwingSpin->setDecimals(0);
+	Form->addRow(tr("Arm swing:"), ArmSwingSpin);
+
+	QSlider* SpeedSlider = new QSlider(Qt::Horizontal, &Dialog);
+	SpeedSlider->setRange(1, 10);
+	SpeedSlider->setValue(5);
+	SpeedSlider->setTickPosition(QSlider::TicksBelow);
+	SpeedSlider->setTickInterval(1);
+	QLabel* SpeedLabel = new QLabel(&Dialog);
+	Form->addRow(tr("Speed (slower ← → faster):"), SpeedSlider);
+	Form->addRow(new QWidget(&Dialog), SpeedLabel);
 
 	QDoubleSpinBox* DirSpin = new QDoubleSpinBox(&Dialog);
 	DirSpin->setRange(0.0, 359.0);
@@ -938,13 +961,17 @@ void lcAnimateWidget::WalkCycleClicked()
 	QLabel* DistLabel = new QLabel(&Dialog);
 	Form->addRow(tr("Total travel:"), DistLabel);
 
-	auto UpdateDistLabel = [&](double stride)
+	auto UpdateLabels = [&]()
 	{
+		const int speed = SpeedSlider->value();
+		const int steps = 4 + (10 - speed) * 4;
+		SpeedLabel->setText(tr("~%1 frames").arg(steps));
+
 		static MinifigWizard* TempWiz = new MinifigWizard();
 		TempWiz->SetPieceInfo(LC_MFW_RLEG, RightLegPieces.front()->mPieceInfo);
 		TempWiz->SetAngle(LC_MFW_RLEG, 0.0f);
 		const float LegLen = TempWiz->mMinifig.Matrices[LC_MFW_RLEG].r[3].z + 44.0f;
-		const float Disp = LegLen * sinf(LC_DTOR * static_cast<float>(stride));
+		const float Disp = LegLen * sinf(LC_DTOR * static_cast<float>(StrideSpin->value()));
 		const double travel = 2.0 * Disp;
 		DistLabel->setText(tr("%1 LDU (~%2 studs)").arg(travel, 0, 'f', 0).arg(travel / 20.0, 0, 'f', 1));
 	};
@@ -953,16 +980,16 @@ void lcAnimateWidget::WalkCycleClicked()
 	{
 		const int gait = GaitCombo->currentIndex();
 		double stride;
-		int steps;
-		if (gait == 2) { stride = 45.0; steps = 4; }
-		else if (gait == 1) { stride = 35.0; steps = 6; }
-		else { stride = 25.0; steps = 8; }
-		StepsSpin->setValue(steps);
+		if (gait == 2) { stride = 45.0; }
+		else if (gait == 1) { stride = 35.0; }
+		else { stride = 25.0; }
 		StrideSpin->setValue(stride);
+		UpdateLabels();
 	};
 
 	QObject::connect(GaitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { UpdateFromGait(); });
-	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double v) { UpdateDistLabel(v); });
+	QObject::connect(SpeedSlider, &QSlider::valueChanged, [&](int) { UpdateLabels(); });
+	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { UpdateLabels(); });
 
 	QDialogButtonBox* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
 	Form->addRow(Buttons);
@@ -973,8 +1000,9 @@ void lcAnimateWidget::WalkCycleClicked()
 	if (!Dialog.exec())
 		return;
 
-	const int Steps = StepsSpin->value();
+	const int Steps = 4 + (10 - SpeedSlider->value()) * 4;
 	const double StrideAngle = StrideSpin->value();
+	const double ArmSwingAngle = ArmSwingSpin->value();
 	const double DirectionDeg = DirSpin->value();
 
 	// Reuses MinifigWizard's own angle-to-matrix math (the exact same code the Minifig Wizard's
@@ -992,6 +1020,29 @@ void lcAnimateWidget::WalkCycleClicked()
 	const lcMatrix44 LLegNeutral = Wizard->mMinifig.Matrices[LC_MFW_LLEG];
 	const lcMatrix44 LLegNeutralInv = lcMatrix44AffineInverse(LLegNeutral);
 
+	lcMatrix44 RArmDelta = lcMatrix44Identity();
+	lcMatrix44 LArmDelta = lcMatrix44Identity();
+	lcMatrix44 RArmNeutralMat = lcMatrix44Identity();
+	lcMatrix44 RArmNeutralInvMat = lcMatrix44Identity();
+	lcMatrix44 LArmNeutralMat = lcMatrix44Identity();
+	lcMatrix44 LArmNeutralInvMat = lcMatrix44Identity();
+
+	if (!RightArmPieces.empty())
+	{
+		Wizard->SetPieceInfo(LC_MFW_RARM, RightArmPieces.front()->mPieceInfo);
+		Wizard->SetAngle(LC_MFW_RARM, 0.0f);
+		RArmNeutralMat = Wizard->mMinifig.Matrices[LC_MFW_RARM];
+		RArmNeutralInvMat = lcMatrix44AffineInverse(RArmNeutralMat);
+	}
+
+	if (!LeftArmPieces.empty())
+	{
+		Wizard->SetPieceInfo(LC_MFW_LARM, LeftArmPieces.front()->mPieceInfo);
+		Wizard->SetAngle(LC_MFW_LARM, 0.0f);
+		LArmNeutralMat = Wizard->mMinifig.Matrices[LC_MFW_LARM];
+		LArmNeutralInvMat = lcMatrix44AffineInverse(LArmNeutralMat);
+	}
+
 	// Calculate step distance from the stride angle and the figure's leg geometry.
 	const float HipOffset = 44.0f;
 	const float TotalLegLength = RLegNeutral.r[3].z + HipOffset;
@@ -1005,6 +1056,10 @@ void lcAnimateWidget::WalkCycleClicked()
 		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
 	for (lcPiece* Piece : LeftLegPieces)
 		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
+	for (lcPiece* Piece : RightArmPieces)
+		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
+	for (lcPiece* Piece : LeftArmPieces)
+		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
 	for (lcPiece* Piece : OtherPieces)
 		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
 
@@ -1015,71 +1070,104 @@ void lcAnimateWidget::WalkCycleClicked()
 	// Save the initial (neutral) state as a frame so deleting and re-generating always starts clean.
 	const lcAnimateFrame NeutralFrame = SnapshotFrame(Model);
 
+	// ponytail: build frames locally to avoid vector::insert inside RunInHistorySequence
+	// (the insert was crashing because vector reallocation moves QMap-backed elements)
+	std::vector<lcAnimateFrame> NewFrames;
+	NewFrames.reserve(1 + Steps);
+
+	NewFrames.push_back(NeutralFrame);
+
+	for (int Step = 0; Step < Steps; Step++)
+	{
+		const float Phase = LC_2PI * static_cast<float>(Step) / static_cast<float>(Steps - 1);
+		const float RightAngle = static_cast<float>(StrideAngle) * sinf(Phase);
+		const float LeftAngle = -RightAngle;
+
+		Wizard->SetAngle(LC_MFW_RLEG, RightAngle);
+		const lcMatrix44 RDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_RLEG], RLegNeutralInv);
+
+		Wizard->SetAngle(LC_MFW_LLEG, LeftAngle);
+		const lcMatrix44 LDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_LLEG], LLegNeutralInv);
+
+		// Arms swing opposite to legs (right arm back when right leg forward)
+		if (!RightArmPieces.empty())
+		{
+			Wizard->SetAngle(LC_MFW_RARM, -static_cast<float>(ArmSwingAngle) * sinf(Phase));
+			RArmDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_RARM], RArmNeutralInvMat);
+		}
+
+		if (!LeftArmPieces.empty())
+		{
+			Wizard->SetAngle(LC_MFW_LARM, static_cast<float>(ArmSwingAngle) * sinf(Phase));
+			LArmDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_LARM], LArmNeutralInvMat);
+		}
+
+		const lcMatrix44 Forward = lcMatrix44Translation(ForwardAxis * static_cast<float>(StepDistance * (Step + 1)));
+
+		for (lcPiece* Piece : RightLegPieces)
+		{
+			const lcStartPose& Start = StartPoses[Piece];
+			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+			const lcMatrix44 NewMatrix = lcMul(lcMul(RDelta, StartMatrix), Forward);
+
+			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
+			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
+			Piece->UpdatePosition(1);
+		}
+
+		for (lcPiece* Piece : LeftLegPieces)
+		{
+			const lcStartPose& Start = StartPoses[Piece];
+			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+			const lcMatrix44 NewMatrix = lcMul(lcMul(LDelta, StartMatrix), Forward);
+
+			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
+			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
+			Piece->UpdatePosition(1);
+		}
+
+		for (lcPiece* Piece : RightArmPieces)
+		{
+			const lcStartPose& Start = StartPoses[Piece];
+			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+			const lcMatrix44 NewMatrix = lcMul(lcMul(RArmDelta, StartMatrix), Forward);
+
+			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
+			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
+			Piece->UpdatePosition(1);
+		}
+
+		for (lcPiece* Piece : LeftArmPieces)
+		{
+			const lcStartPose& Start = StartPoses[Piece];
+			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+			const lcMatrix44 NewMatrix = lcMul(lcMul(LArmDelta, StartMatrix), Forward);
+
+			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
+			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
+			Piece->UpdatePosition(1);
+		}
+
+		for (lcPiece* Piece : OtherPieces)
+		{
+			const lcStartPose& Start = StartPoses[Piece];
+			const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+			const lcMatrix44 NewMatrix = lcMul(StartMatrix, Forward);
+
+			Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
+			Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
+			Piece->UpdatePosition(1);
+		}
+
+		NewFrames.push_back(SnapshotFrame(Model));
+	}
+
 	Model->RunInHistorySequence(tr("Walk Cycle"), [&]()
 	{
 		lcAnimateDocumentState& State = GetState(Model);
-		int InsertIndex = State.CurrentFrameIndex;
-
-		// Insert the neutral start frame first, then append walk cycle frames after it.
-		auto InsertFrame = [&](const lcAnimateFrame& Frame)
-		{
-			InsertIndex++;
-			State.Frames.insert(State.Frames.begin() + InsertIndex, Frame);
-			ThumbnailCacheOnInsert(State.ThumbnailCache, InsertIndex);
-			State.CurrentFrameIndex = InsertIndex;
-		};
-
-		InsertFrame(NeutralFrame);
-
-		for (int Step = 0; Step < Steps; Step++)
-		{
-			const float Phase = LC_2PI * static_cast<float>(Step) / static_cast<float>(Steps - 1);
-			const float RightAngle = static_cast<float>(StrideAngle) * sinf(Phase);
-			const float LeftAngle = -RightAngle;
-
-			Wizard->SetAngle(LC_MFW_RLEG, RightAngle);
-			const lcMatrix44 RDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_RLEG], RLegNeutralInv);
-
-			Wizard->SetAngle(LC_MFW_LLEG, LeftAngle);
-			const lcMatrix44 LDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_LLEG], LLegNeutralInv);
-
-			const lcMatrix44 Forward = lcMatrix44Translation(ForwardAxis * static_cast<float>(StepDistance * (Step + 1)));
-
-			for (lcPiece* Piece : RightLegPieces)
-			{
-				const lcStartPose& Start = StartPoses[Piece];
-				const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
-				const lcMatrix44 NewMatrix = lcMul(lcMul(RDelta, StartMatrix), Forward);
-
-				Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
-				Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
-				Piece->UpdatePosition(1);
-			}
-
-			for (lcPiece* Piece : LeftLegPieces)
-			{
-				const lcStartPose& Start = StartPoses[Piece];
-				const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
-				const lcMatrix44 NewMatrix = lcMul(lcMul(LDelta, StartMatrix), Forward);
-
-				Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
-				Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
-				Piece->UpdatePosition(1);
-			}
-
-			for (lcPiece* Piece : OtherPieces)
-			{
-				const lcStartPose& Start = StartPoses[Piece];
-				const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
-				const lcMatrix44 NewMatrix = lcMul(StartMatrix, Forward);
-
-				Piece->SetPosition(NewMatrix.GetTranslation(), 1, false);
-				Piece->SetRotation(lcMatrix33(NewMatrix), 1, false);
-				Piece->UpdatePosition(1);
-			}
-
-			InsertFrame(SnapshotFrame(Model));
-		}
+		State.Frames = std::move(NewFrames);
+		State.CurrentFrameIndex = 0;
+		State.ThumbnailCache.clear();
 	});
 
 	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
@@ -1475,6 +1563,7 @@ void lcAnimateWidget::SaveAnimationData(Project* CurrentProject, const QString& 
 				CameraObject[QLatin1String("position")] = Vector3ToJson(Frame.CameraPosition);
 				CameraObject[QLatin1String("target")] = Vector3ToJson(Frame.CameraTarget);
 				CameraObject[QLatin1String("up")] = Vector3ToJson(Frame.CameraUpVector);
+				CameraObject[QLatin1String("projection")] = static_cast<int>(Frame.CameraProjection);
 				FrameObject[QLatin1String("camera")] = CameraObject;
 			}
 
@@ -1567,6 +1656,8 @@ void lcAnimateWidget::LoadAnimationData(Project* CurrentProject, const QString& 
 				Frame.CameraTarget = Vector3FromJson(CameraObject.value(QLatin1String("target")).toArray());
 				Frame.CameraUpVector = Vector3FromJson(CameraObject.value(QLatin1String("up")).toArray());
 				Frame.HasCamera = true;
+				if (CameraObject.contains(QLatin1String("projection")))
+					Frame.CameraProjection = static_cast<lcCameraProjection>(CameraObject.value(QLatin1String("projection")).toInt());
 			}
 
 			State.Frames.push_back(Frame);
