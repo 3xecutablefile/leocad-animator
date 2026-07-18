@@ -59,18 +59,6 @@ one single group covering the entire minifig, so selecting any part selects
 4. Pose, then hit **Capture Frame** in the Animate dock.
 
 
-# Online Resources
-
-- Website:
-  https://www.leocad.org
-
-- GitHub page:
-  https://github.com/leozide/leocad
-
-- Unstable builds:
-  https://github.com/leozide/leocad/releases/tag/continuous
-
-
 # Legal Disclaimer
 
 LEGO(R) is a trademark of the LEGO Group of companies which does not sponsor,
