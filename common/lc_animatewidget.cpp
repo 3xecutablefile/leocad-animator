@@ -160,7 +160,13 @@ void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 		return;
 	}
 
-	const QIcon Icon = RenderStepThumbnail(Model, CurrentStep - 1, 120, 90);
+	// Reuse the filmstrip's cached thumbnail instead of spinning up another offscreen GL render -
+	// one less place for context churn to go wrong, and it's already sitting there.
+	QIcon Icon = mThumbnailCache.value(static_cast<int>(CurrentStep - 1));
+
+	if (Icon.isNull())
+		Icon = RenderStepThumbnail(Model, CurrentStep - 1, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+
 	mOnionSkinPreview->setText(QString());
 	mOnionSkinPreview->setPixmap(Icon.pixmap(120, 90));
 }
