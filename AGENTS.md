@@ -153,7 +153,7 @@ Key facts established while debugging this (don't re-derive):
   but **no** `lcMatrix33`↔quaternion conversion and **no** slerp function. This is directly relevant
   to the in-progress work below.
 
-## IN PROGRESS: "Constant Keyframe" mode (not started yet — design only)
+## COMPLETED: "Constant Keyframe" mode
 
 The user wants a second Animate mode selectable alongside the existing "Stop Motion" capture
 workflow: a **Constant Keyframe** mode, explicitly compared to DaVinci Resolve's keyframe editor.
@@ -231,26 +231,23 @@ not re-ask):
   drag if it's expensive — probably fine to just always fully regenerate given typical keyframe
   counts are small, but worth a moment's thought before assuming).
 
-### Next steps for whoever continues this
+### What was built (next steps list → done)
 
-1. Decide option (a) vs (b) for rotation interpolation (recommend re-confirming scoped-down
-   single-axis approach (b) with the user given the stated risk, unless they explicitly want true
-   arbitrary-rotation SLERP).
-2. Add `lcEasingType`, `ApplyEasing()`, `lcKeyframePose`, `lcKeyframePoint` to `lc_animatewidget.h`.
-3. Add a `std::vector<lcKeyframePoint>` (or per-model, mirroring `lcAnimateDocumentState`'s
-   per-model map pattern) to hold the sparse keyframes, separate from the baked `Frames` vector.
-4. Write the bake function: given sorted `lcKeyframePoint`s, produce a full
-   `std::vector<lcAnimateFrame>` covering `[FirstKeyframeTime, LastKeyframeTime]`, one entry per
-   frame, interpolating position (lerp+eased t) and rotation (per decision in step 1) between each
-   consecutive pair.
-5. Build the timeline UI, wire it to call the bake function on any edit, and store the result into
-   the SAME `lcAnimateDocumentState.Frames` so existing Play/Export/thumbnail code needs zero
-   changes.
-6. Add the Stop Motion / Constant Keyframe mode toggle somewhere in the Animate dock.
-7. Build, smoke-test launch, commit directly to `master` (no Co-Authored-By), push, update
-   `/Applications/StopMotionDigital.app`.
-8. Report back honestly that the interpolation math is algebraically-checked but not visually
-   verified, same disclosure pattern as Walk Cycle.
+1. Option (b) chosen: axis-angle decomposition + linear angle lerp for rotation interpolation (exact for single-axis minifig rotations, reasonable approximation otherwise).
+2. `lcEasingType` enum, `ApplyEasing()` inline, `lcKeyframePose`, `lcKeyframePoint` added to `lc_animatewidget.h`.
+3. Per-model `std::vector<lcKeyframePoint> Keyframes` + `lcAnimateMode AnimateMode` in `lcAnimateDocumentState`.
+4. `BakeKeyframes()` in `lc_animatewidget.cpp`: sorts keyframes by time, iterates `[FirstTime, LastTime]` span, lerps positions, axis-angle lerps rotations, lerps camera, applies per-segment easing.
+5. `lcKeyframeTimelineWidget` (`common/lc_keyframetimelinewidget.h/.cpp`): custom QWidget with keyframe diamond markers, easing labels, segment frame ticks, current-time cursor, click-to-select/seek.
+6. `lcAnimateMode` enum + QComboBox mode selector in the Animate dock UI row.
+7. Build, smoke-test launch, commit to master, push, copied to `/Applications/StopMotionDigital.app`.
+8. **Disclosure**: interpolation math is algebraically sound (axis-angle decomposition uses the existing `lcQuaternionToAxisAngle`/`lcQuaternionFromAxisAngle` pipeline in `lc_math.h`) but not visually verified in the 3D viewport. Same risk category as Walk Cycle.
+
+### Remaining gaps for whoever continues
+
+- Keyframe timeline widget is minimal: no drag-to-move keyframes, no rubber-band select, no right-click context menu. Click-to-seek and click-to-select work. Add/Delete buttons add/delete at current timeline position.
+- Easing is per-segment, settable when a keyframe is selected (easing combo reflects the segment *from* that keyframe *to* the next). No visual curve editing.
+- No keyframe at time 0 / at the end of the frame range — the user needs to explicitly add keyframes.
+- Rotation interpolation uses axis-angle, which is correct for single-axis (minifig hip/shoulder swings). For arbitrary multi-axis rotations, full quaternion SLERP would be more correct — the `lcQuaternionSlerp` function needs to be written; `lcMatrix33ToQuaternion` and `lcQuaternionToMatrix33` already exist in `lc_math.h` from this session.
 
 ## Session housekeeping notes
 
