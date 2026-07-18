@@ -849,6 +849,7 @@ void lcMainWindow::CreatePreviewWidget()
 	mPreviewToolBar->setObjectName("PreviewToolBar");
 	mPreviewToolBar->setWidget(mPreviewWidget);
 	addDockWidget(Qt::RightDockWidgetArea, mPreviewToolBar);
+	mPreviewToolBar->setVisible(false); // niche/rarely-needed for posing; declutters the default layout
 
 	connect(mPreviewToolBar, &QDockWidget::topLevelChanged, this, &lcMainWindow::EnableWindowFlags);
 }
