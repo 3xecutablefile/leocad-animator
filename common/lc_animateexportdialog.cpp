@@ -4,7 +4,7 @@
 #include "lc_view.h"
 #include "lc_profile.h"
 
-lcAnimateExportDialog::lcAnimateExportDialog(QWidget* Parent, lcModel* Model, int DefaultFps)
+lcAnimateExportDialog::lcAnimateExportDialog(QWidget* Parent, lcModel* Model, int DefaultFps, int FrameCount)
 	: QDialog(Parent), mModel(Model)
 {
 	setWindowTitle(tr("Export Animation"));
@@ -23,7 +23,7 @@ lcAnimateExportDialog::lcAnimateExportDialog(QWidget* Parent, lcModel* Model, in
 	mFpsSpinBox->setValue(DefaultFps);
 	Form->addRow(tr("Frames per second:"), mFpsSpinBox);
 
-	const int LastStep = static_cast<int>(Model->GetLastStep());
+	const int LastStep = FrameCount;
 
 	mStartSpinBox = new QSpinBox(this);
 	mStartSpinBox->setRange(1, LastStep);

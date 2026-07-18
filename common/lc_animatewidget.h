@@ -40,4 +40,9 @@ protected:
 
 	QMap<int, QIcon> mThumbnailCache;
 	bool mIgnoreUpdates = false;
+
+	// lcModel::GetLastStep() tracks "step a piece first appears" (for building instructions), not
+	// "highest frame with a captured pose" - it never grows in a stop-motion workflow where every
+	// piece is placed once and just moved. Track the real frame count ourselves instead.
+	quint32 mFrameCount = 1;
 };

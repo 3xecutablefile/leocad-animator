@@ -9,7 +9,7 @@ class lcAnimateExportDialog : public QDialog
 	Q_OBJECT
 
 public:
-	lcAnimateExportDialog(QWidget* Parent, lcModel* Model, int DefaultFps);
+	lcAnimateExportDialog(QWidget* Parent, lcModel* Model, int DefaultFps, int FrameCount);
 
 protected slots:
 	void Browse();
