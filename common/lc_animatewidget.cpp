@@ -120,7 +120,7 @@ QIcon lcAnimateWidget::RenderStepThumbnail(lcModel* Model, quint32 Step, int Wid
 void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 {
 	const lcStep CurrentStep = Model->GetCurrentStep();
-	const lcStep LastStep = qMax(Model->GetLastStep(), CurrentStep);
+	const lcStep LastStep = mFrameCount;
 
 	mIgnoreUpdates = true;
 	mFilmstrip->clear();
@@ -173,7 +173,12 @@ void lcAnimateWidget::Update()
 		return;
 
 	const lcStep CurrentStep = Model->GetCurrentStep();
-	const lcStep LastStep = qMax(Model->GetLastStep(), CurrentStep);
+
+	// Self-heal upward only: if we're sitting on a step further out than what we think the frame
+	// count is (e.g. a freshly loaded document), adopt it. Never shrink just because the user
+	// navigated to an earlier frame - that's not the same as the animation getting shorter.
+	mFrameCount = qMax(mFrameCount, CurrentStep);
+	const lcStep LastStep = mFrameCount;
 
 	mFrameLabel->setText(tr("Frame %1 / %2").arg(CurrentStep).arg(LastStep));
 	mDeleteButton->setEnabled(LastStep > 1);
@@ -216,6 +221,7 @@ void lcAnimateWidget::CaptureClicked()
 
 	Model->InsertStepAction(Model->GetCurrentStep() + 1);
 	Model->ShowNextStep();
+	mFrameCount++;
 
 	std::vector<lcObject*> Pieces;
 
@@ -251,6 +257,7 @@ void lcAnimateWidget::DuplicateClicked()
 
 	Model->InsertStepAction(Model->GetCurrentStep() + 1);
 	Model->ShowNextStep();
+	mFrameCount++;
 
 	mThumbnailCache.clear();
 	Update();
@@ -260,10 +267,11 @@ void lcAnimateWidget::DeleteClicked()
 {
 	lcModel* Model = lcGetActiveModel();
 
-	if (!Model || Model->GetLastStep() <= 1)
+	if (!Model || mFrameCount <= 1)
 		return;
 
 	Model->RemoveStepAction(Model->GetCurrentStep());
+	mFrameCount--;
 
 	mThumbnailCache.clear();
 	Update();
@@ -289,7 +297,7 @@ void lcAnimateWidget::PlayPauseClicked()
 	if (!Model)
 		return;
 
-	if (Model->GetCurrentStep() >= Model->GetLastStep())
+	if (Model->GetCurrentStep() >= mFrameCount)
 		Model->SetCurrentStep(1);
 
 	mPlayTimer->start(1000 / mFpsSpinBox->value());
@@ -307,7 +315,7 @@ void lcAnimateWidget::Timeout()
 		return;
 	}
 
-	if (Model->GetCurrentStep() >= Model->GetLastStep())
+	if (Model->GetCurrentStep() >= mFrameCount)
 		Model->SetCurrentStep(1);
 	else
 		Model->ShowNextStep();
@@ -328,6 +336,6 @@ void lcAnimateWidget::ExportClicked()
 	if (!Model)
 		return;
 
-	lcAnimateExportDialog Dialog(this, Model, mFpsSpinBox->value());
+	lcAnimateExportDialog Dialog(this, Model, mFpsSpinBox->value(), static_cast<int>(mFrameCount));
 	Dialog.exec();
 }
