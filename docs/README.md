@@ -7,15 +7,23 @@ and works on the Windows, Linux and macOS Operating Systems.
 
 ## What's new in this fork
 
-An **Animate** dock (View > Toolbars > Animate) adds a frame timeline on top
-of LeoCAD's existing per-step keyframe engine:
+An **Animate** dock (View > Toolbars > Animate) adds a stop-motion capture
+workflow, styled after camera-capture tools like Eagle Animation, on top of
+LeoCAD's existing per-step keyframe engine:
 
-- Scrub or play back frames (steps) at a chosen fps.
-- **Record** toggles LeoCAD's existing "Add Keys" mode, so moving/rotating a
-  piece automatically keys it at the current frame.
-- **+ Frame** inserts a new blank frame after the current one.
-- **Add Keyframe** keys the position/rotation of the current selection at the
-  current frame without needing to move it first.
+- **Capture Frame** — the main action. Pose your pieces, click it, and it
+  inserts a new frame and snapshots every piece's position/rotation, like
+  pressing the shutter on a stop-motion camera. No selecting objects or
+  toggling a record mode first.
+- **Onion Skin** — shows a small reference thumbnail of the previous frame
+  next to the capture button, so you can judge how far to move something.
+  (It's a side-by-side reference image, not a true overlay on the 3D view.)
+- **Duplicate Frame** — holds the current pose for one more frame without
+  capturing anything new (useful for holding a beat).
+- **Delete Frame** — removes the current frame.
+- A **filmstrip** along the bottom shows a thumbnail per frame; click one to
+  jump to it.
+- **Play** / **fps** — play back the animation in the viewport.
 - **Export Animation...** renders the frame range to an animated GIF, MP4
   (via `ffmpeg` if it's on your `PATH`), or a PNG sequence.
 
