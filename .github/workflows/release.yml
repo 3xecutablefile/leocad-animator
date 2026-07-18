@@ -56,19 +56,30 @@ jobs:
           qmake -early QMAKE_DEFAULT_LIBDIRS=$(xcrun -show-sdk-path)/usr/lib
           make -j ${{ steps.cpu-cores.outputs.count }}
 
-      - name: Package
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Package DMG
         run: |
-          cd build/release
-          zip -r -y ../../StopMotionDigital-macOS.zip StopMotionDigital.app
+          create-dmg \
+            --volname "StopMotionDigital" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "StopMotionDigital.app" 150 190 \
+            --hide-extension "StopMotionDigital.app" \
+            --app-drop-link 450 190 \
+            "StopMotionDigital.dmg" \
+            "build/release/StopMotionDigital.app"
 
       - name: Publish rolling release
         uses: ncipollo/release-action@v1
         with:
           tag: continuous
           name: Continuous Build
-          body: Automatically built from the latest push to ${{ github.ref_name }} (${{ github.sha }}). Not a stable release.
+          body: Automatically built from the latest push to ${{ github.ref_name }} (${{ github.sha }}). Not a stable release. Unsigned - first launch needs right-click > Open (or `xattr -cr`) to get past Gatekeeper.
           prerelease: true
           allowUpdates: true
           removeArtifacts: true
-          artifacts: StopMotionDigital-macOS.zip
+          artifacts: StopMotionDigital.dmg
           token: ${{ secrets.GITHUB_TOKEN }}
