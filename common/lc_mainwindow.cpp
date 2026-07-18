@@ -65,7 +65,7 @@ lcMainWindow::lcMainWindow()
 	mAngleSnapEnabled = true;
 	mMoveXYSnapIndex = 4;
 	mMoveZSnapIndex = 3;
-	mAngleSnapIndex = 5;
+	mAngleSnapIndex = 1; // 1 degree (AngleTable: 0, 1, 5, 15, 22.5, 30, 45, 60, 90, 180) - finer control for posing
 	mRelativeTransform = true;
 	mLocalTransform = false;
 	mCurrentPieceInfo = nullptr;
