@@ -183,6 +183,10 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 	mIgnoreUpdates = true;
 	mFilmstrip->clear();
 
+	// Snapshot whatever is actually live on screen right now - which may be an uncaptured edit
+	// that doesn't match mFrames[mCurrentFrameIndex] yet - before any temporary re-posing below,
+	// so we restore the real live state and never silently discard an in-progress move.
+	lcAnimateFrame LiveState;
 	bool NeedsViewportRestore = false;
 
 	for (int Index = 0; Index < static_cast<int>(mFrames.size()); Index++)
@@ -191,6 +195,9 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 
 		if (Icon.isNull())
 		{
+			if (!NeedsViewportRestore)
+				LiveState = SnapshotFrame(Model);
+
 			Icon = RenderFrameThumbnail(Model, Index, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
 			mThumbnailCache.insert(Index, Icon);
 			NeedsViewportRestore = true;
@@ -199,10 +206,13 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 		mFilmstrip->addItem(new QListWidgetItem(Icon, QString::number(Index + 1)));
 	}
 
-	// Rendering thumbnails above may have posed pieces as other frames - restore the real current
-	// frame once at the end instead of after every single thumbnail (avoids viewport flicker).
+	// Rendering thumbnails above may have posed pieces as other frames - restore the real live
+	// state once at the end instead of after every single thumbnail (avoids viewport flicker too).
 	if (NeedsViewportRestore)
-		ApplyFrame(Model, mCurrentFrameIndex);
+	{
+		lcPoseAnimateFrame(Model, LiveState);
+		Model->SetCurrentStep(1);
+	}
 
 	mFilmstrip->setCurrentRow(mCurrentFrameIndex);
 	mIgnoreUpdates = false;
@@ -229,9 +239,15 @@ void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 
 	if (Icon.isNull())
 	{
+		// Same rule as RefreshFilmstrip: preserve whatever is actually live on screen (which may
+		// be an uncaptured edit), don't snap back to the stored current-frame data.
+		const lcAnimateFrame LiveState = SnapshotFrame(Model);
+
 		Icon = RenderFrameThumbnail(Model, PreviousIndex, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
 		mThumbnailCache.insert(PreviousIndex, Icon);
-		ApplyFrame(Model, mCurrentFrameIndex);
+
+		lcPoseAnimateFrame(Model, LiveState);
+		Model->SetCurrentStep(1);
 	}
 
 	mOnionSkinPreview->setText(QString());
