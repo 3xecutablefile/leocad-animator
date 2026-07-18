@@ -153,7 +153,7 @@ void lcKeyframeTimelineWidget::mousePressEvent(QMouseEvent* Event)
 		}
 	}
 
-	// Click on a segment — select the segment
+	// Click on a segment — select the segment and seek
 	for (size_t i = 0; i < mKeyframes->size() - 1; i++)
 	{
 		const int x1 = TimeToX((*mKeyframes)[i].Time);
@@ -162,6 +162,8 @@ void lcKeyframeTimelineWidget::mousePressEvent(QMouseEvent* Event)
 		{
 			mSelectedIndex = -1;
 			mSelectedSegment = (int)i;
+			mCurrentTime = qBound(mFrameStart, XToTime(mx), mFrameEnd);
+			emit CurrentTimeDragged(mCurrentTime);
 			update();
 			return;
 		}
@@ -176,7 +178,7 @@ void lcKeyframeTimelineWidget::mousePressEvent(QMouseEvent* Event)
 
 void lcKeyframeTimelineWidget::mouseMoveEvent(QMouseEvent* Event)
 {
-	if (Event->buttons() & Qt::LeftButton && mSelectedIndex < 0 && mSelectedSegment < 0)
+	if (Event->buttons() & Qt::LeftButton)
 	{
 		const int newTime = qBound(mFrameStart, XToTime(Event->x()), mFrameEnd);
 		if (newTime != mCurrentTime)
