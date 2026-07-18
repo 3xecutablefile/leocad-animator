@@ -908,14 +908,74 @@ void lcAnimateWidget::WalkCycleClicked()
 		return;
 	}
 
-	bool Ok = false;
-	const int Steps = QInputDialog::getInt(this, tr("Walk Cycle"), tr("Number of frames for one full stride cycle (right forward - passing - right back - passing):"), 8, 4, 64, 1, &Ok);
-	if (!Ok)
+	// Build dialog
+	QDialog Dialog(this);
+	Dialog.setWindowTitle(tr("Walk Cycle"));
+	QFormLayout* Form = new QFormLayout(&Dialog);
+
+	QComboBox* GaitCombo = new QComboBox(&Dialog);
+	GaitCombo->addItems({ tr("Walk"), tr("Jog"), tr("Run") });
+	Form->addRow(tr("Gait:"), GaitCombo);
+
+	QDoubleSpinBox* StrideSpin = new QDoubleSpinBox(&Dialog);
+	StrideSpin->setRange(1.0, 60.0);
+	StrideSpin->setSuffix(tr(" deg"));
+	StrideSpin->setDecimals(0);
+	Form->addRow(tr("Stride angle:"), StrideSpin);
+
+	QSpinBox* StepsSpin = new QSpinBox(&Dialog);
+	StepsSpin->setRange(4, 64);
+	StepsSpin->setSuffix(tr(" frames"));
+	Form->addRow(tr("Duration:"), StepsSpin);
+
+	QDoubleSpinBox* DirSpin = new QDoubleSpinBox(&Dialog);
+	DirSpin->setRange(0.0, 359.0);
+	DirSpin->setSuffix(tr(" deg"));
+	DirSpin->setDecimals(0);
+	DirSpin->setToolTip(tr("0 = forward along +Y, 90 = along +X"));
+	Form->addRow(tr("Direction:"), DirSpin);
+
+	QLabel* DistLabel = new QLabel(&Dialog);
+	Form->addRow(tr("Total travel:"), DistLabel);
+
+	auto UpdateDistLabel = [&](double stride)
+	{
+		static MinifigWizard* TempWiz = new MinifigWizard();
+		TempWiz->SetPieceInfo(LC_MFW_RLEG, RightLegPieces.front()->mPieceInfo);
+		TempWiz->SetAngle(LC_MFW_RLEG, 0.0f);
+		const float LegLen = TempWiz->mMinifig.Matrices[LC_MFW_RLEG].r[3].z + 44.0f;
+		const float Disp = LegLen * sinf(LC_DTOR * static_cast<float>(stride));
+		const double travel = 2.0 * Disp;
+		DistLabel->setText(tr("%1 LDU (~%2 studs)").arg(travel, 0, 'f', 0).arg(travel / 20.0, 0, 'f', 1));
+	};
+
+	auto UpdateFromGait = [&]()
+	{
+		const int gait = GaitCombo->currentIndex();
+		double stride;
+		int steps;
+		if (gait == 2) { stride = 45.0; steps = 4; }
+		else if (gait == 1) { stride = 35.0; steps = 6; }
+		else { stride = 25.0; steps = 8; }
+		StepsSpin->setValue(steps);
+		StrideSpin->setValue(stride);
+	};
+
+	QObject::connect(GaitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { UpdateFromGait(); });
+	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double v) { UpdateDistLabel(v); });
+
+	QDialogButtonBox* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
+	Form->addRow(Buttons);
+	QObject::connect(Buttons, &QDialogButtonBox::accepted, &Dialog, &QDialog::accept);
+	QObject::connect(Buttons, &QDialogButtonBox::rejected, &Dialog, &QDialog::reject);
+
+	UpdateFromGait();
+	if (!Dialog.exec())
 		return;
 
-	const double StrideAngle = QInputDialog::getDouble(this, tr("Walk Cycle"), tr("Stride angle (degrees each leg swings forward/back from the current pose at its peak):"), 25.0, 1.0, 60.0, 1, &Ok);
-	if (!Ok)
-		return;
+	const int Steps = StepsSpin->value();
+	const double StrideAngle = StrideSpin->value();
+	const double DirectionDeg = DirSpin->value();
 
 	// Reuses MinifigWizard's own angle-to-matrix math (the exact same code the Minifig Wizard's
 	// angle sliders use) instead of re-deriving hip rotation math here - it's already correct for
@@ -933,10 +993,6 @@ void lcAnimateWidget::WalkCycleClicked()
 	const lcMatrix44 LLegNeutralInv = lcMatrix44AffineInverse(LLegNeutral);
 
 	// Calculate step distance from the stride angle and the figure's leg geometry.
-	// The foot tip is at ground level, RootZ units below the body center (rotation origin).
-	// When the leg swings by StrideAngle, the foot tip moves forward by TotalLegLength * sin(StrideAngle).
-	// Over one full cycle (two steps), total forward = 2 * forward displacement.
-	// ponytail: TotalLegLength = RootZ (body center to ground); extracted from RLEG's Z offset.
 	const float HipOffset = 44.0f;
 	const float TotalLegLength = RLegNeutral.r[3].z + HipOffset;
 	const float ForwardDisplacement = TotalLegLength * sinf(LC_DTOR * static_cast<float>(StrideAngle));
@@ -952,22 +1008,31 @@ void lcAnimateWidget::WalkCycleClicked()
 	for (lcPiece* Piece : OtherPieces)
 		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
 
-	// Walking forward is along the model's +Y axis, matching the leg hip swing axis convention used
-	// throughout minifig.cpp (RotationX for the hip means the foot travels along Y).
-	const lcVector3 ForwardAxis(0.0f, 1.0f, 0.0f);
+	// Forward direction based on user's angle: 0 = +Y, rotates CCW as angle increases.
+	const float DirRad = LC_DTOR * static_cast<float>(DirectionDeg);
+	lcVector3 ForwardAxis(sinf(DirRad), cosf(DirRad), 0.0f);
+
+	// Save the initial (neutral) state as a frame so deleting and re-generating always starts clean.
+	const lcAnimateFrame NeutralFrame = SnapshotFrame(Model);
 
 	Model->RunInHistorySequence(tr("Walk Cycle"), [&]()
 	{
 		lcAnimateDocumentState& State = GetState(Model);
 		int InsertIndex = State.CurrentFrameIndex;
 
+		// Insert the neutral start frame first, then append walk cycle frames after it.
+		auto InsertFrame = [&](const lcAnimateFrame& Frame)
+		{
+			InsertIndex++;
+			State.Frames.insert(State.Frames.begin() + InsertIndex, Frame);
+			ThumbnailCacheOnInsert(State.ThumbnailCache, InsertIndex);
+			State.CurrentFrameIndex = InsertIndex;
+		};
+
+		InsertFrame(NeutralFrame);
+
 		for (int Step = 0; Step < Steps; Step++)
 		{
-			// A sine sweep instead of a hard binary flip between +/-StrideAngle: every frame gets an
-			// in-between pose (contact - passing - contact - passing), and the sine's own slope
-			// naturally eases the swing in/out at each extreme instead of snapping to it at a
-			// constant angular speed.
-			// Phase goes from 0 to 2π so the last frame lands back at neutral (legs together).
 			const float Phase = LC_2PI * static_cast<float>(Step) / static_cast<float>(Steps - 1);
 			const float RightAngle = static_cast<float>(StrideAngle) * sinf(Phase);
 			const float LeftAngle = -RightAngle;
@@ -1013,10 +1078,7 @@ void lcAnimateWidget::WalkCycleClicked()
 				Piece->UpdatePosition(1);
 			}
 
-			InsertIndex++;
-			State.Frames.insert(State.Frames.begin() + InsertIndex, SnapshotFrame(Model));
-			ThumbnailCacheOnInsert(State.ThumbnailCache, InsertIndex);
-			State.CurrentFrameIndex = InsertIndex;
+			InsertFrame(SnapshotFrame(Model));
 		}
 	});
 
