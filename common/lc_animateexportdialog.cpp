@@ -4,8 +4,8 @@
 #include "lc_view.h"
 #include "lc_profile.h"
 
-lcAnimateExportDialog::lcAnimateExportDialog(QWidget* Parent, lcModel* Model, int DefaultFps, int FrameCount)
-	: QDialog(Parent), mModel(Model)
+lcAnimateExportDialog::lcAnimateExportDialog(QWidget* Parent, lcModel* Model, int DefaultFps, const std::vector<lcAnimateFrame>& Frames)
+	: QDialog(Parent), mModel(Model), mFrames(Frames)
 {
 	setWindowTitle(tr("Export Animation"));
 
@@ -23,16 +23,16 @@ lcAnimateExportDialog::lcAnimateExportDialog(QWidget* Parent, lcModel* Model, in
 	mFpsSpinBox->setValue(DefaultFps);
 	Form->addRow(tr("Frames per second:"), mFpsSpinBox);
 
-	const int LastStep = FrameCount;
+	const int FrameCount = static_cast<int>(mFrames.size());
 
 	mStartSpinBox = new QSpinBox(this);
-	mStartSpinBox->setRange(1, LastStep);
+	mStartSpinBox->setRange(1, FrameCount);
 	mStartSpinBox->setValue(1);
 	Form->addRow(tr("Start frame:"), mStartSpinBox);
 
 	mEndSpinBox = new QSpinBox(this);
-	mEndSpinBox->setRange(1, LastStep);
-	mEndSpinBox->setValue(LastStep);
+	mEndSpinBox->setRange(1, FrameCount);
+	mEndSpinBox->setValue(FrameCount);
 	Form->addRow(tr("End frame:"), mEndSpinBox);
 
 	QHBoxLayout* FileLayout = new QHBoxLayout;
@@ -82,8 +82,8 @@ void lcAnimateExportDialog::Accept()
 		return;
 	}
 
-	const lcStep Start = static_cast<lcStep>(mStartSpinBox->value());
-	const lcStep End = static_cast<lcStep>(mEndSpinBox->value());
+	const int Start = mStartSpinBox->value();
+	const int End = mEndSpinBox->value();
 
 	if (Start > End)
 	{
@@ -104,26 +104,42 @@ void lcAnimateExportDialog::Accept()
 
 	const QString FrameDir = (Format == 2) ? OutputPath : TempDir.path();
 	QDir().mkpath(FrameDir);
-	const QString FramePattern = FrameDir + QLatin1String("/frame_%1.png");
 
 	lcView View(lcViewType::View, mModel);
 	View.SetOffscreenContext();
 	View.MakeCurrent();
 	View.SetSize(lcGetProfileInt(LC_PROFILE_RENDER_WIDTH), lcGetProfileInt(LC_PROFILE_RENDER_HEIGHT));
 
-	QProgressDialog Progress(tr("Rendering frames..."), tr("Cancel"), 0, static_cast<int>(End - Start + 1), this);
+	QProgressDialog Progress(tr("Rendering frames..."), tr("Cancel"), 0, End - Start + 1, this);
 	Progress.setWindowModality(Qt::WindowModal);
 
-	int FrameIndex = 0;
+	// Frames are exported as a sequential 1..N sequence regardless of which logical frame numbers
+	// Start/End refer to - ffmpeg and the PNG sequence don't need to know the original numbering.
+	int OutputNumber = 1;
 
-	View.SaveStepImages(FramePattern, true, Start, End, [&Progress, &FrameIndex](const QString&)
+	for (int FrameIndex = Start - 1; FrameIndex <= End - 1; FrameIndex++, OutputNumber++)
 	{
-		Progress.setValue(++FrameIndex);
-		QApplication::processEvents();
-	});
+		lcPoseAnimateFrame(mModel, mFrames[FrameIndex]);
 
-	if (Progress.wasCanceled())
-		return;
+		const std::vector<QImage> Images = View.GetStepImages(1, 1);
+
+		if (!Images.empty())
+		{
+			const QString FileName = FrameDir + QString("/frame_%1.png").arg(OutputNumber, 2, 10, QLatin1Char('0'));
+			QImageWriter Writer(FileName);
+
+			if (Writer.format().isEmpty())
+				Writer.setFormat("png");
+
+			Writer.write(Images.front());
+		}
+
+		Progress.setValue(OutputNumber);
+		QApplication::processEvents();
+
+		if (Progress.wasCanceled())
+			return;
+	}
 
 	if (Format == 2)
 	{
@@ -141,7 +157,7 @@ void lcAnimateExportDialog::Accept()
 	}
 
 	const QString InputPattern = FrameDir + QLatin1String("/frame_%02d.png");
-	const QStringList Arguments = lcBuildFfmpegAnimationArguments(InputPattern, Fps, static_cast<int>(Start), OutputPath, Format == 0);
+	const QStringList Arguments = lcBuildFfmpegAnimationArguments(InputPattern, Fps, OutputPath, Format == 0);
 
 	QProcess Ffmpeg;
 	Ffmpeg.start(FfmpegPath, Arguments);

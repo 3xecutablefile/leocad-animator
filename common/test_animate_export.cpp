@@ -15,18 +15,17 @@
 
 int main()
 {
-	const QStringList GifArgs = lcBuildFfmpegAnimationArguments(QStringLiteral("/tmp/frame_%02d.png"), 12, 1, QStringLiteral("/tmp/out.gif"), true);
+	const QStringList GifArgs = lcBuildFfmpegAnimationArguments(QStringLiteral("/tmp/frame_%02d.png"), 12, QStringLiteral("/tmp/out.gif"), true);
 	assert(GifArgs.contains(QStringLiteral("-framerate")));
 	assert(GifArgs[GifArgs.indexOf(QStringLiteral("-framerate")) + 1] == QStringLiteral("12"));
 	assert(GifArgs.contains(QStringLiteral("-loop")));
 	assert(GifArgs.last() == QStringLiteral("/tmp/out.gif"));
 	assert(!GifArgs.contains(QStringLiteral("-c:v")));
 
-	const QStringList Mp4Args = lcBuildFfmpegAnimationArguments(QStringLiteral("/tmp/frame_%02d.png"), 24, 5, QStringLiteral("/tmp/out.mp4"), false);
+	const QStringList Mp4Args = lcBuildFfmpegAnimationArguments(QStringLiteral("/tmp/frame_%02d.png"), 24, QStringLiteral("/tmp/out.mp4"), false);
 	assert(Mp4Args.contains(QStringLiteral("-c:v")));
 	assert(Mp4Args[Mp4Args.indexOf(QStringLiteral("-c:v")) + 1] == QStringLiteral("libx264"));
 	assert(!Mp4Args.contains(QStringLiteral("-loop")));
-	assert(Mp4Args[Mp4Args.indexOf(QStringLiteral("-start_number")) + 1] == QStringLiteral("5"));
 
 	std::printf("test_animate_export: all checks passed\n");
 	return 0;
