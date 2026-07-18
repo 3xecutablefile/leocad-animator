@@ -15,13 +15,13 @@ void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame)
 {
 	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
 	{
-		const QString& ID = Piece->GetID();
+		lcPiece* PiecePtr = Piece.get();
 
-		if (Frame.Positions.contains(ID))
-			Piece->SetPosition(Frame.Positions.value(ID), 1, false);
+		if (Frame.Positions.contains(PiecePtr))
+			Piece->SetPosition(Frame.Positions.value(PiecePtr), 1, false);
 
-		if (Frame.Rotations.contains(ID))
-			Piece->SetRotation(Frame.Rotations.value(ID), 1, false);
+		if (Frame.Rotations.contains(PiecePtr))
+			Piece->SetRotation(Frame.Rotations.value(PiecePtr), 1, false);
 
 		Piece->UpdatePosition(1);
 	}
@@ -140,8 +140,8 @@ lcAnimateFrame lcAnimateWidget::SnapshotFrame(lcModel* Model) const
 
 	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
 	{
-		Frame.Positions[Piece->GetID()] = Piece->GetPosition();
-		Frame.Rotations[Piece->GetID()] = Piece->GetRotation();
+		Frame.Positions[Piece.get()] = Piece->GetPosition();
+		Frame.Rotations[Piece.get()] = Piece->GetRotation();
 	}
 
 	return Frame;

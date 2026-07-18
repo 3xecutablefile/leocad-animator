@@ -4,15 +4,18 @@
 
 class lcAnimateExportDialog;
 class lcModel;
+class lcPiece;
 
-// A frame is just a snapshot of every piece's position/rotation, keyed by piece ID. This dock owns
-// frames directly instead of using LeoCAD's per-Step keyframe/building-instructions machinery -
-// that machinery tracks "the step a piece first appears," not "captured animation frames," and
-// kept causing mismatches (frame counts collapsing, deletes silently no-oping, etc).
+// A frame is just a snapshot of every piece's position/rotation, keyed by the piece object itself
+// (NOT lcPiece::GetID() - that's the LDraw part filename, shared by every instance of the same
+// part, e.g. a left hand and right hand are literally the same part and collide on that key).
+// This dock owns frames directly instead of using LeoCAD's per-Step keyframe/building-instructions
+// machinery - that machinery tracks "the step a piece first appears," not "captured animation
+// frames," and kept causing mismatches (frame counts collapsing, deletes silently no-oping, etc).
 struct lcAnimateFrame
 {
-	QMap<QString, lcVector3> Positions;
-	QMap<QString, lcMatrix33> Rotations;
+	QMap<lcPiece*, lcVector3> Positions;
+	QMap<lcPiece*, lcMatrix33> Rotations;
 };
 
 void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame);
