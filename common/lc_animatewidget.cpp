@@ -140,20 +140,18 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	SocketModeToggled(mSocketModeCheck->isChecked());
 }
 
-void lcAnimateWidget::EnsureInitialized(lcModel* Model)
+lcAnimateDocumentState& lcAnimateWidget::GetState(lcModel* Model)
 {
-	// ponytail: one animation history per dock, not per document - switching to a different open
-	// model tab resets it. Fine for the single-document workflow this is built for; multi-document
-	// support would need frames stored on the model itself, not here.
-	if (mInitialized && mLastModel == Model)
-		return;
+	const auto It = mDocumentStates.find(Model);
 
-	mFrames.clear();
-	mFrames.push_back(SnapshotFrame(Model));
-	mCurrentFrameIndex = 0;
-	mThumbnailCache.clear();
-	mLastModel = Model;
-	mInitialized = true;
+	if (It != mDocumentStates.end())
+		return It.value();
+
+	lcAnimateDocumentState& State = mDocumentStates[Model];
+	State.Frames.push_back(SnapshotFrame(Model));
+	State.CurrentFrameIndex = 0;
+
+	return State;
 }
 
 lcAnimateFrame lcAnimateWidget::SnapshotFrame(lcModel* Model) const
@@ -180,21 +178,25 @@ lcAnimateFrame lcAnimateWidget::SnapshotFrame(lcModel* Model) const
 
 void lcAnimateWidget::ApplyFrame(lcModel* Model, int FrameIndex)
 {
-	if (FrameIndex < 0 || FrameIndex >= static_cast<int>(mFrames.size()))
+	lcAnimateDocumentState& State = GetState(Model);
+
+	if (FrameIndex < 0 || FrameIndex >= static_cast<int>(State.Frames.size()))
 		return;
 
-	lcPoseAnimateFrame(Model, mFrames[FrameIndex]);
+	lcPoseAnimateFrame(Model, State.Frames[FrameIndex]);
 	Model->SetCurrentStep(1); // redraws the live viewport and refreshes the rest of the UI
 }
 
 QIcon lcAnimateWidget::RenderFrameThumbnail(lcModel* Model, int FrameIndex, int Width, int Height)
 {
-	if (FrameIndex < 0 || FrameIndex >= static_cast<int>(mFrames.size()))
+	lcAnimateDocumentState& State = GetState(Model);
+
+	if (FrameIndex < 0 || FrameIndex >= static_cast<int>(State.Frames.size()))
 		return QIcon();
 
 	// Poses pieces directly without going through SetCurrentStep, so this doesn't touch the live
 	// viewport - the caller is responsible for restoring the real current frame afterward.
-	lcPoseAnimateFrame(Model, mFrames[FrameIndex]);
+	lcPoseAnimateFrame(Model, State.Frames[FrameIndex]);
 
 	lcView View(lcViewType::View, Model);
 	View.SetOffscreenContext();
@@ -211,18 +213,21 @@ QIcon lcAnimateWidget::RenderFrameThumbnail(lcModel* Model, int FrameIndex, int 
 
 void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 {
+	lcAnimateDocumentState& State = GetState(Model);
+
 	mIgnoreUpdates = true;
 	mFilmstrip->clear();
 
 	// Snapshot whatever is actually live on screen right now - which may be an uncaptured edit
-	// that doesn't match mFrames[mCurrentFrameIndex] yet - before any temporary re-posing below,
-	// so we restore the real live state and never silently discard an in-progress move.
+	// that doesn't match State.Frames[State.CurrentFrameIndex] yet - before any temporary
+	// re-posing below, so we restore the real live state and never silently discard an
+	// in-progress move.
 	lcAnimateFrame LiveState;
 	bool NeedsViewportRestore = false;
 
-	for (int Index = 0; Index < static_cast<int>(mFrames.size()); Index++)
+	for (int Index = 0; Index < static_cast<int>(State.Frames.size()); Index++)
 	{
-		QIcon Icon = mThumbnailCache.value(Index);
+		QIcon Icon = State.ThumbnailCache.value(Index);
 
 		if (Icon.isNull())
 		{
@@ -230,7 +235,7 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 				LiveState = SnapshotFrame(Model);
 
 			Icon = RenderFrameThumbnail(Model, Index, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
-			mThumbnailCache.insert(Index, Icon);
+			State.ThumbnailCache.insert(Index, Icon);
 			NeedsViewportRestore = true;
 		}
 
@@ -245,7 +250,7 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 		Model->SetCurrentStep(1);
 	}
 
-	mFilmstrip->setCurrentRow(mCurrentFrameIndex);
+	mFilmstrip->setCurrentRow(State.CurrentFrameIndex);
 	mIgnoreUpdates = false;
 }
 
@@ -258,15 +263,17 @@ void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 		return;
 	}
 
-	if (mCurrentFrameIndex <= 0)
+	lcAnimateDocumentState& State = GetState(Model);
+
+	if (State.CurrentFrameIndex <= 0)
 	{
 		mOnionSkinPreview->setPixmap(QPixmap());
 		mOnionSkinPreview->setText(tr("No previous frame"));
 		return;
 	}
 
-	const int PreviousIndex = mCurrentFrameIndex - 1;
-	QIcon Icon = mThumbnailCache.value(PreviousIndex);
+	const int PreviousIndex = State.CurrentFrameIndex - 1;
+	QIcon Icon = State.ThumbnailCache.value(PreviousIndex);
 
 	if (Icon.isNull())
 	{
@@ -275,7 +282,7 @@ void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 		const lcAnimateFrame LiveState = SnapshotFrame(Model);
 
 		Icon = RenderFrameThumbnail(Model, PreviousIndex, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
-		mThumbnailCache.insert(PreviousIndex, Icon);
+		State.ThumbnailCache.insert(PreviousIndex, Icon);
 
 		lcPoseAnimateFrame(Model, LiveState);
 		Model->SetCurrentStep(1);
@@ -292,11 +299,11 @@ void lcAnimateWidget::Update()
 	if (!Model)
 		return;
 
-	EnsureInitialized(Model);
+	lcAnimateDocumentState& State = GetState(Model);
 
-	const int FrameCount = static_cast<int>(mFrames.size());
+	const int FrameCount = static_cast<int>(State.Frames.size());
 
-	mFrameLabel->setText(tr("Frame %1 / %2").arg(mCurrentFrameIndex + 1).arg(FrameCount));
+	mFrameLabel->setText(tr("Frame %1 / %2").arg(State.CurrentFrameIndex + 1).arg(FrameCount));
 	mDeleteButton->setEnabled(FrameCount > 1);
 
 	if (mFilmstrip->count() != FrameCount)
@@ -304,7 +311,7 @@ void lcAnimateWidget::Update()
 	else
 	{
 		mIgnoreUpdates = true;
-		mFilmstrip->setCurrentRow(mCurrentFrameIndex);
+		mFilmstrip->setCurrentRow(State.CurrentFrameIndex);
 		mIgnoreUpdates = false;
 	}
 
@@ -322,8 +329,8 @@ void lcAnimateWidget::FilmstripItemChanged(int Row)
 	if (!Model)
 		return;
 
-	mCurrentFrameIndex = Row;
-	ApplyFrame(Model, mCurrentFrameIndex);
+	GetState(Model).CurrentFrameIndex = Row;
+	ApplyFrame(Model, Row);
 	Update();
 }
 
@@ -334,12 +341,12 @@ void lcAnimateWidget::CaptureClicked()
 	if (!Model)
 		return;
 
-	EnsureInitialized(Model);
+	lcAnimateDocumentState& State = GetState(Model);
 
-	mFrames.insert(mFrames.begin() + mCurrentFrameIndex + 1, SnapshotFrame(Model));
-	mCurrentFrameIndex++;
+	State.Frames.insert(State.Frames.begin() + State.CurrentFrameIndex + 1, SnapshotFrame(Model));
+	State.CurrentFrameIndex++;
+	State.ThumbnailCache.clear();
 
-	mThumbnailCache.clear();
 	Update();
 }
 
@@ -350,13 +357,13 @@ void lcAnimateWidget::DuplicateClicked()
 	if (!Model)
 		return;
 
-	EnsureInitialized(Model);
+	lcAnimateDocumentState& State = GetState(Model);
 
-	mFrames.insert(mFrames.begin() + mCurrentFrameIndex + 1, mFrames[mCurrentFrameIndex]);
-	mCurrentFrameIndex++;
+	State.Frames.insert(State.Frames.begin() + State.CurrentFrameIndex + 1, State.Frames[State.CurrentFrameIndex]);
+	State.CurrentFrameIndex++;
+	State.ThumbnailCache.clear();
 
-	mThumbnailCache.clear();
-	ApplyFrame(Model, mCurrentFrameIndex);
+	ApplyFrame(Model, State.CurrentFrameIndex);
 	Update();
 }
 
@@ -364,16 +371,22 @@ void lcAnimateWidget::DeleteClicked()
 {
 	lcModel* Model = lcGetActiveModel();
 
-	if (!Model || mFrames.size() <= 1)
+	if (!Model)
 		return;
 
-	mFrames.erase(mFrames.begin() + mCurrentFrameIndex);
+	lcAnimateDocumentState& State = GetState(Model);
 
-	if (mCurrentFrameIndex >= static_cast<int>(mFrames.size()))
-		mCurrentFrameIndex = static_cast<int>(mFrames.size()) - 1;
+	if (State.Frames.size() <= 1)
+		return;
 
-	mThumbnailCache.clear();
-	ApplyFrame(Model, mCurrentFrameIndex);
+	State.Frames.erase(State.Frames.begin() + State.CurrentFrameIndex);
+
+	if (State.CurrentFrameIndex >= static_cast<int>(State.Frames.size()))
+		State.CurrentFrameIndex = static_cast<int>(State.Frames.size()) - 1;
+
+	State.ThumbnailCache.clear();
+
+	ApplyFrame(Model, State.CurrentFrameIndex);
 	Update();
 }
 
@@ -397,12 +410,12 @@ void lcAnimateWidget::PlayPauseClicked()
 	if (!Model)
 		return;
 
-	EnsureInitialized(Model);
+	lcAnimateDocumentState& State = GetState(Model);
 
-	if (mCurrentFrameIndex >= static_cast<int>(mFrames.size()) - 1)
+	if (State.CurrentFrameIndex >= static_cast<int>(State.Frames.size()) - 1)
 	{
-		mCurrentFrameIndex = 0;
-		ApplyFrame(Model, mCurrentFrameIndex);
+		State.CurrentFrameIndex = 0;
+		ApplyFrame(Model, State.CurrentFrameIndex);
 	}
 
 	mPlayTimer->start(1000 / mFpsSpinBox->value());
@@ -420,12 +433,14 @@ void lcAnimateWidget::Timeout()
 		return;
 	}
 
-	if (mCurrentFrameIndex >= static_cast<int>(mFrames.size()) - 1)
-		mCurrentFrameIndex = 0;
-	else
-		mCurrentFrameIndex++;
+	lcAnimateDocumentState& State = GetState(Model);
 
-	ApplyFrame(Model, mCurrentFrameIndex);
+	if (State.CurrentFrameIndex >= static_cast<int>(State.Frames.size()) - 1)
+		State.CurrentFrameIndex = 0;
+	else
+		State.CurrentFrameIndex++;
+
+	ApplyFrame(Model, State.CurrentFrameIndex);
 	Update();
 }
 
@@ -533,12 +548,12 @@ void lcAnimateWidget::ExportClicked()
 	if (!Model)
 		return;
 
-	EnsureInitialized(Model);
+	lcAnimateDocumentState& State = GetState(Model);
 
-	lcAnimateExportDialog Dialog(this, Model, mFpsSpinBox->value(), mFrames);
+	lcAnimateExportDialog Dialog(this, Model, mFpsSpinBox->value(), State.Frames);
 	Dialog.exec();
 
 	// Exporting poses pieces as each exported frame; make sure the viewport reflects the frame
 	// we're actually parked on once the dialog closes.
-	ApplyFrame(Model, mCurrentFrameIndex);
+	ApplyFrame(Model, State.CurrentFrameIndex);
 }

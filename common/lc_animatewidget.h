@@ -20,6 +20,16 @@ struct lcAnimateFrame
 
 void lcPoseAnimateFrame(lcModel* Model, const lcAnimateFrame& Frame);
 
+// lcGetActiveModel() is not a stable "the current document" pointer - it switches to point at a
+// submodel while one is being edited in place (LC_PIECE_EDIT_SELECTED_SUBMODEL), then back. Frame
+// history is kept per-model so that happening never destroys another model's animation.
+struct lcAnimateDocumentState
+{
+	std::vector<lcAnimateFrame> Frames;
+	int CurrentFrameIndex = 0;
+	QMap<int, QIcon> ThumbnailCache;
+};
+
 class lcAnimateWidget : public QWidget
 {
 	Q_OBJECT
@@ -28,10 +38,6 @@ public:
 	lcAnimateWidget(QWidget* Parent);
 
 	void Update();
-	const std::vector<lcAnimateFrame>& GetFrames() const
-	{
-		return mFrames;
-	}
 
 public slots:
 	void FilmstripItemChanged(int Row);
@@ -46,7 +52,7 @@ public slots:
 	void AttachToHandClicked();
 
 protected:
-	void EnsureInitialized(lcModel* Model);
+	lcAnimateDocumentState& GetState(lcModel* Model);
 	lcAnimateFrame SnapshotFrame(lcModel* Model) const;
 	void ApplyFrame(lcModel* Model, int FrameIndex);
 	QIcon RenderFrameThumbnail(lcModel* Model, int FrameIndex, int Width, int Height);
@@ -65,11 +71,7 @@ protected:
 	QPushButton* mExportButton;
 	QTimer* mPlayTimer;
 
-	std::vector<lcAnimateFrame> mFrames;
-	int mCurrentFrameIndex = 0;
-	lcModel* mLastModel = nullptr;
-	bool mInitialized = false;
+	QMap<lcModel*, lcAnimateDocumentState> mDocumentStates;
 
-	QMap<int, QIcon> mThumbnailCache;
 	bool mIgnoreUpdates = false;
 };
