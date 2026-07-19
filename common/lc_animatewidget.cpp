@@ -584,7 +584,27 @@ void lcAnimateWidget::Update()
 		// Auto-keyframe in Constant Keyframe mode
 		if (State.AnimateMode == lcAnimateMode::ConstantKeyframe && mAutoKeyframeCheck->isChecked() && !mIsApplyingFrame && !mSkipAutoKeyframe)
 		{
-			const lcAnimateFrame CurrentSnapshot = SnapshotFrame(Model);
+			// Capture ALL pieces (not just visible ones) — SnapshotFrame skips hidden pieces,
+			// but pieces temporarily hidden by AnimateForcedHidden (absent from current frame)
+			// are still part of the scene and must be preserved in auto-keyframes.
+			lcAnimateFrame CurrentSnapshot;
+			for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+			{
+				lcPiece* Ptr = Piece.get();
+				CurrentSnapshot.Positions[Ptr] = Ptr->GetPosition();
+				CurrentSnapshot.Rotations[Ptr] = Ptr->GetRotation();
+			}
+			if (lcView* ActiveView = gMainWindow->GetActiveView())
+			{
+				if (lcCamera* Camera = ActiveView->GetCamera())
+				{
+					CurrentSnapshot.CameraPosition = Camera->GetPosition();
+					CurrentSnapshot.CameraTarget = Camera->GetTargetPosition();
+					CurrentSnapshot.CameraUpVector = Camera->GetUpVector();
+					CurrentSnapshot.CameraProjection = Camera->GetProjection();
+					CurrentSnapshot.HasCamera = true;
+				}
+			}
 
 			if (!mAutoKeyframeInitialized)
 			{
