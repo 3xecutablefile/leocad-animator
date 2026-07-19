@@ -1365,37 +1365,35 @@ void lcAnimateWidget::WalkCycleClicked()
 		State.CurrentFrameIndex = 0;
 		State.ThumbnailCache.clear();
 
-		// In Constant Keyframe mode, generate keyframes from the walk cycle frames
-		// so the timeline shows something and doesn't snap back to stale keyframes.
+		// In Constant Keyframe mode, create a keyframe at every frame so any later
+		// BakeKeyframes preserves the full walk cycle (not just start→end lerp).
 		if (State.AnimateMode == lcAnimateMode::ConstantKeyframe)
 		{
 			State.Keyframes.clear();
-			lcKeyframePoint KfStart;
-			KfStart.Time = 0;
-			KfStart.Pose.Positions = State.Frames.front().Positions;
-			KfStart.Pose.Rotations = State.Frames.front().Rotations;
-			KfStart.Pose.CameraPosition = State.Frames.front().CameraPosition;
-			KfStart.Pose.CameraTarget = State.Frames.front().CameraTarget;
-			KfStart.Pose.CameraUpVector = State.Frames.front().CameraUpVector;
-			KfStart.Pose.CameraProjection = State.Frames.front().CameraProjection;
-			KfStart.Pose.HasCamera = State.Frames.front().HasCamera;
-			State.Keyframes.push_back(KfStart);
-
-			lcKeyframePoint KfEnd;
-			KfEnd.Time = (int)State.Frames.size() - 1;
-			KfEnd.Pose.Positions = State.Frames.back().Positions;
-			KfEnd.Pose.Rotations = State.Frames.back().Rotations;
-			KfEnd.Pose.CameraPosition = State.Frames.back().CameraPosition;
-			KfEnd.Pose.CameraTarget = State.Frames.back().CameraTarget;
-			KfEnd.Pose.CameraUpVector = State.Frames.back().CameraUpVector;
-			KfEnd.Pose.CameraProjection = State.Frames.back().CameraProjection;
-			KfEnd.Pose.HasCamera = State.Frames.back().HasCamera;
-			State.Keyframes.push_back(KfEnd);
+			for (int i = 0; i < (int)State.Frames.size(); i++)
+			{
+				lcKeyframePoint Kf;
+				Kf.Time = i;
+				Kf.Pose.Positions = State.Frames[i].Positions;
+				Kf.Pose.Rotations = State.Frames[i].Rotations;
+				Kf.Pose.CameraPosition = State.Frames[i].CameraPosition;
+				Kf.Pose.CameraTarget = State.Frames[i].CameraTarget;
+				Kf.Pose.CameraUpVector = State.Frames[i].CameraUpVector;
+				Kf.Pose.CameraProjection = State.Frames[i].CameraProjection;
+				Kf.Pose.HasCamera = State.Frames[i].HasCamera;
+				Kf.SegmentEasing = lcEasingType::Linear;
+				State.Keyframes.push_back(Kf);
+			}
 		}
 	});
 
 	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
 	mSkipAutoKeyframe = false;
+
+	// Prevent auto-keyframe from detecting the just-applied walk cycle pose as "changed"
+	// and calling BakeKeyframes (which would regen from keyframes and lose the motion).
+	mLastAutoKeyframeDigest = SnapshotFrame(Model);
+
 	mTimelineWidget->SetKeyframes(&GetState(Model).Keyframes);
 	mTimelineWidget->SetFrameRange(0, std::max((int)GetState(Model).Frames.size(), 10));
 	mTimelineWidget->SetCurrentTime(GetState(Model).CurrentFrameIndex);
