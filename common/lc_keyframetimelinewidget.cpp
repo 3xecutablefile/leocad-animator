@@ -6,7 +6,7 @@
 lcKeyframeTimelineWidget::lcKeyframeTimelineWidget(QWidget* Parent)
 	: QWidget(Parent)
 {
-	setFixedHeight(50);
+	setMinimumHeight(64);
 	setMouseTracking(true);
 }
 
@@ -27,7 +27,7 @@ void lcKeyframeTimelineWidget::SetCurrentTime(int Frame)
 void lcKeyframeTimelineWidget::SetFrameRange(int Start, int End)
 {
 	mFrameStart = Start;
-	mFrameEnd = End;
+	mFrameEnd = Start + std::max(End - Start, 200);
 	update();
 }
 
