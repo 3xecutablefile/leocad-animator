@@ -164,36 +164,93 @@ Key established facts (do not re-derive):
 - **Timeline wider**: `SetFrameRange` pads end to `max(End-Start, 200)`; `setFixedHeight(50)` →
   `setMinimumHeight(64)`.
 
-## IN PROGRESS / BROKEN
+### Full 8-angle code review + fix pass (all confirmed findings fixed)
+Ran an 8-angle review (3 correctness, reuse, simplification, efficiency, altitude, conventions) over
+the full `upstream/master...HEAD` diff. Every CONFIRMED/PLAUSIBLE finding was fixed:
+- **`mMinifigFamily` was never persisted** (biggest find): `lcGroup::mMinifigFamily` is a runtime
+  pointer with no serialization, so Walk Cycle/Ragdoll/Mirror Pose/Alt+click-select-minifig silently
+  stopped working on ANY project after save+reopen. Fixed by writing/reading a new
+  `0 !LEOCAD GROUP MINIFIG_FAMILY <family-group-name>` LDraw meta line right after each group's
+  `GROUP BEGIN` line (`lc_model.cpp` `SaveLDraw`/`LoadLDraw`). Load side resolves names to pointers
+  in a second pass after the whole file is parsed (`PendingMinifigFamily`), not assuming file order.
+- **Ghost pass use-after-free**: `lc_view.cpp`'s `OnDraw` ghost pass dereferenced raw `lcPiece*` keys
+  from `mGhostPositions`/`mGhostRotations` with no check they still exist in the model - fixed with a
+  `LivePieces` set built each pass, skipping stale keys.
+- **`RemoveEmptyGroups` could delete a still-referenced family-tag group**: it only counted piece
+  membership and `mGroup` parent references, not `mMinifigFamily` references from sibling groups -
+  fixed by treating "referenced as another group's family tag" as unconditionally non-removable.
+- **Auto-keyframe digest was widget-global, not per-model**: `mAutoKeyframeInitialized`/
+  `mLastAutoKeyframeDigest` lived on `lcAnimateWidget` itself; switching the active model compared
+  the new model's live pieces against the OLD model's stale digest, spuriously inserting a bogus
+  keyframe. Moved into `lcAnimateDocumentState` (per-model).
+- **`DuplicateClicked` missing empty-`Frames` guard**: `DeleteClicked` had one, `DuplicateClicked`
+  didn't - reachable via Clear/Delete Keyframe dropping `State.Frames` to empty while the Duplicate
+  button stays visible in Constant Keyframe mode. Added the guard.
+- **Walk Cycle / Ragdoll's `RunInHistorySequence` was a no-op**: piece mutations happened in a loop
+  *before* `RunInHistorySequence` was called, so `BeginEditHistory`'s `SaveStartState` snapshotted
+  the pieces already at their final generated pose; the callback itself never touched piece state
+  (net piece state returns to `NeutralFrame` via `ApplyFrame(..., 0)` at the end anyway) - so nothing
+  was ever pushed to the undo stack despite the misleading `tr("Walk Cycle")` description. Removed
+  the wrapper, added the same honest "not undoable via Ctrl+Z" disclosure Capture/Duplicate/Delete
+  Frame already have.
+- **`BakeKeyframes` O(FrameCount × KeyframeCount) bracket search**: re-scanned all keyframes for
+  every output frame despite `Keyframes` being sorted - replaced with a single advancing cursor
+  (O(FrameCount + KeyframeCount)). Also removed two dead no-op loops and added a `CurrentFrameIndex`
+  clamp so every `BakeKeyframes` caller (not just `ModeChanged`) keeps the index in bounds.
+- **Export dialog crash on empty `Frames`**: `lcAnimateExportDialog`'s Start/End spin boxes collapse
+  to a degenerate range when `Frames` is empty (reachable via Clear/Delete Keyframe), and the render
+  loop indexed the empty vector out of bounds. `ExportClicked` now refuses to open the dialog when
+  `State.Frames` is empty; `Accept()` also guards directly.
+- **Ragdoll's ghost preview was missing the QImage fallback** Walk Cycle's preview has (added in the
+  same commit family specifically because the OpenGL ghost pass alone isn't reliable) - both dialogs'
+  preview lambdas now share one `ShowMinifigProjectionGhost` helper, which also killed ~90 lines of
+  duplicated save/mutate/render/restore code between them.
+- `SetAlphaScale`'s `mAlphaScaleDirty` flag was set but never read in `lcContext::FlushState` - wired
+  into the dirty-check gate.
+- Duplicated "convert Frames into Keyframes" block (WalkCycleClicked/RagdollClicked, ~17 lines each)
+  factored into one `RebuildKeyframesFromFrames` helper.
 
-### Ragdoll Death Animation Generator
+### smd_mcp: registration + core parsing bugs (see MCP section below for details)
+The MCP server was never actually usable end to end: not registered for Claude Code at all (only
+`.opencode.jsonc` existed), `create_project` crashed if the target directory didn't exist yet, and -
+the critical one - the LDraw group parser was looking for a syntax (`0 GROUP <n> <name>`) that
+StopMotionDigital's own C++ save code has never written (real format: `0 !LEOCAD GROUP BEGIN
+<name>`), so `read_project`/`generate_walk_cycle`/`generate_ragdoll` saw **zero groups** on every
+real app-saved project. Fixed; see "MCP Server" section for the full breakdown.
+
+### Ragdoll Death Animation Generator (v3 — joint-articulated rewrite)
 Procedural stop-motion death/ragdoll animation for Posable minifigs. Selected minifig + dialog →
 frames: knockback, obstacle hit, bounce, settle in sprawled pose. **Not** real-time physics —
 deliberate stop-motion look.
 
-**Current state**: v2 implementation with:
-- **Randomized per run**: direction jitter (±10°), knockback distance (0.75-1.25x), fall height
-  (0.7-1.3x), impact timing (55-65% into animation), per-frame noise amplitudes and phases
-- **Unsocketed limbs**: per-group scatter direction vectors, limbs fly off independently at impact
-  with quadratic trajectory (fast initial fling, then coast)
-- **Ground clamp**: z drops to 0 after impact; bounce impulse at hit moment
-- Per-group rotation noise with randomized frequency/amplitude per frame
+**v1/v2 problem** (user: "why does a minifig combust on death anim", "should unsocket parts", "death
+animations are the same"): every limb GROUP (e.g. forearm + hand together) rotated as one rigid body
+around the body's center of mass via a raw single-axis quaternion spin, with full-intensity noise
+regardless of how hard the hit was. That reads as a rigid slab orbiting a point, not an articulated
+fall, and looked identical in kind for "Got shot" and "Explosion" alike.
 
-**Still broken per user**:
-- "Death animations are the same" — v2 adds randomization but user hasn't tested it yet
-- "Don't adhere to physics" — body trajectory is piecewise polynomial, no genuine physics
-  simulation (intentional stop-motion, not real physics; but may need better ground interaction)
-- "Should unsocket parts" — v2 adds scatter offsets but limbs may not separate convincingly
+**v3 fix**:
+- Arms/legs now swing from their real shoulder/hip pivot via `MinifigWizard::SetAngle` (same math
+  Walk Cycle uses) — `RArmDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_RARM], RArmNeutralInv)`,
+  applied to the piece's start pose *before* the whole-body tumble transform, so articulation and
+  tumble compose correctly instead of both fighting for the same pivot.
+- Head pivots on the wizard's neck position (`Matrices[LC_MFW_HEAD].GetTranslation()`), not body
+  center; still free-axis rotation (no single-DOF wizard angle suits a backward head flop).
+- **`Intensity` derived from Knockback** (`qBound(0.2, Knockback/10, 1.0)`), scales peak flail/splay/
+  headLag angles, noise amplitude, and per-piece scatter jitter. A "Got shot" death (small Knockback)
+  gets a controlled buckle-and-collapse; "Explosion" (large Knockback) keeps the full flail.
+- Per-piece jitter (`PerPieceScatterJitter`, one random vector per piece) added on top of the shared
+  per-group scatter direction, so multi-piece limbs visibly separate piece-from-piece at impact
+  instead of moving as one rigid block — the closest approximation to "unsocketing" without a real
+  joint graph.
+- Presets rebalanced: Punched=3 studs, **Got shot=0.5 studs** (mostly a vertical collapse, was 12),
+  Fell off cliff=1.5 studs (height-dominant), Explosion=20 studs (unchanged, full chaos is correct
+  here). Default Knockback lowered from 8 to 2 studs.
 
-**Parameters**: Direction (0-359°), Knockback (1-20 studs), Fall height/slope, Frames (12-48,
-default 24). Presets: "Punched" / "Got shot" / "Fell off cliff" / "Explosion".
+**Implementation**: `RagdollClicked` in `lc_animatewidget.cpp`. `RunInHistorySequence` wrapper was
+removed - it was a no-op, see the review-fix-pass entry above.
 
-**No wizard reuse**: unlike Walk Cycle (which needs per-joint precision), ragdoll limbs get direct
-rotation values from noise/delay functions. `MinifigWizard` not consulted.
-
-**Implementation**: `RagdollClicked` in `lc_animatewidget.cpp`, reuses group detection,
-`RunInHistorySequence`, `SnapshotFrame`, local-vector→move pattern. Button in animate dock next to
-Walk Cycle.
+## IN PROGRESS / BROKEN
 
 ### Viewport onion skin (replacing dock thumbnail)
 - Current dock shows a 120x90 QLabel thumbnail (`mOnionSkinPreview`) rendered via
@@ -218,8 +275,179 @@ Walk Cycle.
 - **Auto-keyframe at time 0** / at end of frame range (user currently must add keyframes
   explicitly).
 
+## MCP Server — AI animation agent (`smd_mcp/`)
+
+An MCP server at `smd_mcp/` lets AI agents (Claude Code, opencode, etc) create
+and manipulate StopMotionDigital animations by editing `.ldr` + `.animate.json`
+files directly. Registered for Claude Code via `.mcp.json` at the repo root
+(auto-discovered, no setup needed) and for opencode via `.opencode.jsonc`, both
+under the name `smd`. See `smd_mcp/README.md` for registering it elsewhere.
+
+### Piece positioning — must use `MinifigWizard::Calculate()` math
+
+**Never hand-place minifig pieces.** The C++ `MinifigWizard::Calculate()` in
+`common/minifig.cpp:317-486` is the only correct source for piece transforms.
+The wizard chain is:
+
+```
+Root = Translate(0, 0, 72)
+
+BODY  = Offset_BODY  × Root
+NECK  = Offset_NECK  × Root                         (optional)
+HEAD  = Offset_HEAD  × RotZ(-angle) × Trans(0,0,24) × Root
+HATS  = Offset_HATS  × RotZ(-angle) × HEAD          (optional)
+HATS2 = Offset_HATS2 × RotX(-angle) × HATS          (optional)
+
+RARM  = Offset_RARM × RotX(-angle) × RotY(-9.791°) × Trans(15.552,0,-8.88) × Root
+RHAND = Offset_RHAND × RotY(-angle) × RotX(45°) × Trans(5,-10,-19) × RARM
+LARM  = Offset_LARM × RotX(-angle) × RotY(9.791°) × Trans(-15.552,0,-8.88) × Root
+LHAND = Offset_LHAND × RotY(-angle) × RotX(45°) × Trans(-5,-10,-19) × LARM
+
+BODY2 (= hips) = Offset_BODY2 × Trans(0,0,-32) × Root
+RLEG  = Offset_RLEG × RotX(-angle) × Trans(0,0,-44) × Root
+LLEG  = Offset_LLEG × RotX(-angle) × Trans(0,0,-44) × Root
+```
+
+Where `Offset_<TYPE>` is the piece's per-type offset matrix from
+`resources/minifig.ini`. The offset for the default part is always identity
+for standard pieces (the 0-th entry in each `mSettings[Type]` array).
+
+**Implications for AI agents:**
+- **Never compute positions manually.** Call the MCP tool `animate_transform`,
+  `generate_walk_cycle`, `set_frame_piece`, or the Python wizard chain in
+  `smd_mcp/server.py` (`_wizard_matrix()` + `_piece_settings_offset()`).
+- The Python `_wizard_matrix()` in `server.py` mirrors `Calculate()` exactly
+  (including `minifig.ini` offsets).
+- **Always include both `973.dat` (torso) and `3815.dat` (hips)** in the Torso
+  group — they both go at the same root position but are separate pieces.
+- Left/right legs share the same position offset from root — their geometry
+  already encodes left/right stance. Leg angle = `RotX(-angle)` applied at
+  `Trans(0,0,-44)`.
+
+### Minifig identification
+
+Group names do **not** encode a custom figure name - the app names them just
+`"Minifig <Assembly> #N"` (e.g. `"Minifig Right Arm #1"`, auto-numbered), so
+there is no `<Name>` to match against. What actually links a minifig's 6
+per-limb groups together is `lcGroup::mMinifigFamily`, a runtime C++ pointer
+persisted in the `.ldr` as a `0 !LEOCAD GROUP MINIFIG_FAMILY <family-group-
+name>` line right after that group's `GROUP BEGIN` line (see `lc_model.cpp`
+`SaveLDraw`/`LoadLDraw`) - the family group is whichever of the 6 was created
+first, and every sibling (including that first one, self-referencing) points
+at it by name.
+
+The MCP server's `LDrawGroup.minifig_family` field holds that **family
+group's name string** (e.g. `"Minifig Torso #1"`) - this is also the
+`minifig_name` identifier `generate_walk_cycle`/`generate_ragdoll` take.
+`get_project_status`'s `"minifigs"` list surfaces the available identifiers
+for a project, since there's no human-readable name to guess.
+
+Typical limb piece contents (for reference, not how minifigs are identified):
+- Torso contains `973.dat` + `3815.dat`
+- Head contains `3626bp01.dat` (and optional hats)
+- RightArm contains `3819.dat` + `3820.dat`
+- LeftArm contains `3818.dat` + `3820.dat`
+- RightLeg contains `3817.dat`
+- LeftLeg contains `3816.dat`
+
+**Building a minifig via `add_piece`**: pass the *same* `minifig_family`
+string on every one of the 6 groups' first `add_piece` call (conventionally
+the first group's own `group_name`) - see `add_piece`'s docstring in
+`server.py`.
+
+### Walk cycle
+
+Use `generate_walk_cycle` tool. It implements the full `Calculate()` chain
+with gait warping. Gait options: Walk, Jog, Run. Stride angle default 25°.
+
+### Camera
+
+Camera data per frame: `{position, target, up, projection}`. Position/target
+use LeoCAD internal coordinates (X=right, Y=forward, Z=up). Default camera:
+`position=[0,-120,80] target=[0,0,72] up=[0,0,1]` — behind the action,
+elevated, looking at waist height.
+
+For dynamic scenes, set camera on keyframes and use `interpolate_frames`
+or `bake_keyframes` to fill intermediate camera positions.
+
+### Rendering
+
+The `export_video` tool provides instructions. To actually render:
+```
+uv run python -m smd_mcp.render_frames
+```
+This reads `~/Desktop/fight.ldr` + `fight.animate.json`, renders each frame
+via LeoCAD CLI (`-i` + `--camera-position`), and stitches with ffmpeg.
+
+### All MCP tools (30)
+
+| Tool | What it does |
+|---|---|
+| `read_project` | Parse .ldr, return pieces + groups + frames |
+| `get_project_status` | Summary: piece/frame/minifig counts |
+| `create_project` | New empty .ldr + .animate.json |
+| `add_piece` | Add a piece to the scene |
+| `capture_frame` | Snapshot current .ldr positions as a new frame |
+| `get_frame` | Read a frame's piece/camera data |
+| `list_frames` | List all frame indices |
+| `set_frame_piece` | Set position/rotation for one piece in one frame |
+| `set_frame_camera` | Set camera for one frame |
+| `duplicate_frame` | Copy frame to end |
+| `delete_frames` | Remove frames by index |
+| `reverse_frames` | Reverse frame order |
+| `loop_animation` | Create a seamless loop |
+| `time_remap_frames` | Stretch/squeeze frame timing |
+| `interpolate_frames` | Smooth between two keyframes |
+| `stagger_pieces` | Offset piece motion across frames |
+| `animate_transform` | Animate piece with easing across frame range |
+| `ease_frames` | Apply easing to a range |
+| `follow_curve` | Bezier path animation |
+| `bake_keyframes` | Interpolate sparse keyframes into full animation |
+| `bounce_effect` | Physics bounce on pieces |
+| `swing_effect` | Pendulum swing |
+| `wave_effect` | Sequential wave across pieces |
+| `shake_effect` | Camera/piece shake |
+| `explosion_effect` | Scatter + spin pieces outward |
+| `randomize_frame` | Add noise to positions/rotations |
+| `generate_walk_cycle` | Walk/jog/run for a named minifig |
+| `generate_ragdoll` | Death/fall animation for a named minifig |
+| `batch_transform_pieces` | Move/rotate groups of pieces at once |
+| `export_video` | Instructions for rendering to MP4 |
+
+### Agent workflow for a scene
+
+1. `create_project` — set up .ldr + .animate.json
+2. `add_piece` for each minifig piece, OR write .ldr directly with groups
+3. `capture_frame` — snapshot initial pose as frame 0
+4. `generate_walk_cycle` / `set_frame_piece` / `animate_transform` — build
+   key poses
+5. `interpolate_frames` or `bake_keyframes` — fill between keyframes
+6. `set_frame_camera` on key frames for dynamic camera
+7. Render via `uv run python -m smd_mcp.render_frames`
+
+### Known issues
+
+- The `_wizard_matrix` in `server.py` must be kept in sync with
+  `MinifigWizard::Calculate()` and `resources/minifig.ini`. If C++ code
+  changes, update the Python copy.
+- `export_video` doesn't actually render — it returns instructions. Use
+  `render_frames.py` or open the project in StopMotionDigital and use
+  File → Export Animation.
+- Camera in `render_frames.py` uses `--camera-position` with LeoCAD internal
+  coords (X=right, Y=forward, Z=up). Must match frame data format.
+
 ## Relevant Files
 
+- `smd_mcp/smd_mcp/server.py`: MCP server with all 30 tools, wizard chain,
+  walk cycle, ragdoll, effects
+- `smd_mcp/smd_mcp/animate_fight.py`: Example — generates 120-frame fight
+  scene for two minifigs
+- `smd_mcp/smd_mcp/render_frames.py`: Renders .animate.json → PNG frames →
+  ffmpeg MP4
+- `smd_mcp/pyproject.toml`: uv project config, entry point `smd-mcp`
+- `.opencode.jsonc`: MCP server registration (`type: "local"`)
+- `common/minifig.cpp`: `Calculate()` — source of truth for piece transforms
+- `resources/minifig.ini`: Per-piece-type offset matrices
 - `common/lc_animatewidget.cpp`: WalkCycleClicked, RagdollClicked, BakeKeyframes, RefreshFilmstrip,
   projection ghost lambdas
 - `common/lc_animatewidget.h`: lcKeyframePoint (default easing now Linear), lcAnimateDocumentState,

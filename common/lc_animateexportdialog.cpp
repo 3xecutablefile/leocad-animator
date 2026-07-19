@@ -74,6 +74,12 @@ void lcAnimateExportDialog::Browse()
 
 void lcAnimateExportDialog::Accept()
 {
+	if (mFrames.empty())
+	{
+		QMessageBox::warning(this, tr("Export Animation"), tr("There are no frames to export."));
+		return;
+	}
+
 	const QString OutputPath = mFileEdit->text().trimmed();
 
 	if (OutputPath.isEmpty())

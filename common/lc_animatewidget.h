@@ -94,6 +94,13 @@ struct lcAnimateDocumentState
 	QSet<lcPiece*> AnimateForcedHidden;
 	lcAnimateMode AnimateMode = lcAnimateMode::StopMotion;
 	std::vector<lcKeyframePoint> Keyframes;
+
+	// Auto-keyframe change-detection baseline. Per-model (not a widget member) because it's a
+	// snapshot of THIS model's pieces keyed by THIS model's lcPiece* pointers - comparing it against
+	// a different model's live pieces after switching the active model would always spuriously
+	// register as "changed" and insert a bogus keyframe.
+	bool AutoKeyframeInitialized = false;
+	lcAnimateFrame LastAutoKeyframeDigest;
 };
 
 class lcAnimateWidget : public QWidget
@@ -147,6 +154,12 @@ protected:
 	void RefreshOnionSkin(lcModel* Model);
 	void BakeKeyframes(lcModel* Model, lcAnimateDocumentState& State);
 
+	// Shared by Walk Cycle / Ragdoll's live parameter-preview dialogs: shows GhostPositions/
+	// GhostRotations both via the OpenGL ghost pass (SetGhostFrame) and as a QImage overlay
+	// (ShowGhostImage) - the QImage path is a guaranteed-visibility fallback for configurations
+	// where the OpenGL ghost pass doesn't reliably composite.
+	void ShowMinifigProjectionGhost(lcModel* Model, const QMap<lcPiece*, lcVector3>& GhostPositions, const QMap<lcPiece*, lcMatrix33>& GhostRotations);
+
 	QComboBox* mModeSelector;
 	QListWidget* mFilmstrip;
 	QWidget* mKeyframeControls;
@@ -183,6 +196,4 @@ protected:
 	int mFpsLastValue = 12;
 	bool mIsApplyingFrame = false;
 	bool mSkipAutoKeyframe = false;
-	bool mAutoKeyframeInitialized = false;
-	lcAnimateFrame mLastAutoKeyframeDigest;
 };

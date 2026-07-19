@@ -58,6 +58,26 @@ one single group covering the entire minifig, so selecting any part selects
    toolbar) to pose them — rotation snap defaults to 1° for fine control.
 4. Pose, then hit **Capture Frame** in the Animate dock.
 
+## Animating with an AI agent (MCP server)
+
+`smd_mcp/` is an [MCP](https://modelcontextprotocol.io) server that lets an AI
+coding agent (Claude Code, opencode, etc.) build and animate a
+StopMotionDigital project directly — creating pieces, posing minifigs,
+generating walk cycles and ragdoll falls, keyframing, and exporting — by
+calling tools that edit the project's `.ldr` + `.animate.json` files, no GUI
+interaction required.
+
+- **Already registered for this repo**: `.mcp.json` (Claude Code) and
+  `.opencode.jsonc` (opencode) at the repo root wire it up automatically —
+  just open a session in this directory and approve the server when prompted.
+- **30 tools** covering project/scene setup, frame timeline editing, easing/
+  physics effects (bounce, swing, wave, explosion), procedural walk cycle and
+  ragdoll generation, and keyframe baking.
+- Full setup instructions (including registering it in other repos) and the
+  complete tool list: see [`smd_mcp/README.md`](../smd_mcp/README.md).
+- Architecture notes and the minifig-grouping data model an agent needs to
+  know (`AGENTS.md`'s "MCP Server" section) are in [`AGENTS.md`](../AGENTS.md).
+
 
 # Legal Disclaimer
 

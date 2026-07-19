@@ -1184,12 +1184,13 @@ void lcContext::FlushState()
 			mProjectionMatrixDirty = false;
 		}
 
-		if (mColorDirty && Program.MaterialColorLocation != -1)
+		if ((mColorDirty || mAlphaScaleDirty) && Program.MaterialColorLocation != -1)
 		{
 			lcVector4 ScaledColor = mColor;
 			ScaledColor.w *= mAlphaScale;
 			glUniform4fv(Program.MaterialColorLocation, 1, ScaledColor.GetFloats());
 			mColorDirty = false;
+			mAlphaScaleDirty = false;
 		}
 
 		if (mHighlightParamsDirty && Program.HighlightParamsLocation != -1)

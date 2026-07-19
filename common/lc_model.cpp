@@ -439,6 +439,13 @@ void lcModel::SaveLDraw(QTextStream& Stream, bool SelectedOnly, lcStep LastStep)
 					lcGroup* Group = *ParentIt;
 					CurrentGroups.emplace_back(Group);
 					Stream << QLatin1String("0 !LEOCAD GROUP BEGIN ") << Group->mName << LineEnding;
+
+					// mMinifigFamily is a runtime-only pointer (see group.h) with no other
+					// serialization - without this, every group's family tag is silently lost on
+					// save/reload, breaking Walk Cycle/Ragdoll/Mirror Pose/Alt+click-select-minifig
+					// on any project that's been saved and reopened.
+					if (Group->mMinifigFamily)
+						Stream << QLatin1String("0 !LEOCAD GROUP MINIFIG_FAMILY ") << Group->mMinifigFamily->mName << LineEnding;
 				}
 			}
 		}
@@ -564,6 +571,11 @@ void lcModel::LoadLDraw(QIODevice& Device, Project* Project)
 	int CurrentStep = 1;
 	lcPiecesLibrary* Library = lcGetPiecesLibrary();
 
+	// (Group, family group name) pairs from GROUP MINIFIG_FAMILY lines, resolved to pointers once
+	// every group has been parsed (see the resolution loop below) rather than assuming the family
+	// group always appears earlier in the file.
+	std::vector<std::pair<lcGroup*, QString>> PendingMinifigFamily;
+
 	mProperties.mAuthor.clear();
 	mProperties.mDescription.clear();
 	mProperties.mComments.clear();
@@ -685,6 +697,13 @@ void lcModel::LoadLDraw(QIODevice& Device, Project* Project)
 					if (!CurrentGroups.empty())
 						CurrentGroups.pop_back();
 				}
+				else if (Token == QLatin1String("MINIFIG_FAMILY"))
+				{
+					const QString FamilyName = LineStream.readAll().trimmed();
+
+					if (!CurrentGroups.empty() && !FamilyName.isEmpty())
+						PendingMinifigFamily.emplace_back(CurrentGroups.back(), FamilyName);
+				}
 			}
 			else if (Token == QLatin1String("SYNTH"))
 			{
@@ -778,6 +797,12 @@ void lcModel::LoadLDraw(QIODevice& Device, Project* Project)
 
 		FirstLine = false;
 	}
+
+	// GetGroup(Name, true) creates the group if a MINIFIG_FAMILY line's target wasn't otherwise
+	// referenced by any piece (possible for a hand-written or externally-generated .ldr) - consistent
+	// with how GROUP BEGIN itself resolves group names below.
+	for (const std::pair<lcGroup*, QString>& Pending : PendingMinifigFamily)
+		Pending.first->mMinifigFamily = GetGroup(Pending.second, true);
 
 	mCurrentStep = CurrentStep;
 	CalculateStep(mCurrentStep);
@@ -2479,7 +2504,20 @@ void lcModel::RemoveEmptyGroups()
 				if (mGroups[ParentIdx]->mGroup == Group)
 					Ref++;
 
-			if (Ref > 1)
+			// A group tagged as another group's minifig family (see lcGroup::mMinifigFamily) is
+			// referenced by pointer, not by the mGroup parent chain or piece membership - if any
+			// sibling limb group still points at Group as its family tag, Group must survive even
+			// with zero pieces of its own, or those siblings are left with a dangling mMinifigFamily.
+			bool IsFamilyTag = false;
+
+			for (size_t SiblingIdx = 0; SiblingIdx < mGroups.size(); SiblingIdx++)
+				if (mGroups[SiblingIdx]->mMinifigFamily == Group)
+				{
+					IsFamilyTag = true;
+					break;
+				}
+
+			if (Ref > 1 || IsFamilyTag)
 			{
 				GroupIt++;
 				continue;

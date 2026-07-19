@@ -880,6 +880,7 @@ void lcView::OnDraw()
 		QMap<lcPiece*, lcVector3> SavedPositions;
 		QMap<lcPiece*, lcMatrix33> SavedRotations;
 		QMap<lcPiece*, bool> SavedHidden;
+		QSet<lcPiece*> LivePieces;
 
 		for (const std::unique_ptr<lcPiece>& Piece : mModel->GetPieces())
 		{
@@ -887,10 +888,18 @@ void lcView::OnDraw()
 			SavedPositions[Ptr] = Ptr->GetPosition();
 			SavedRotations[Ptr] = Ptr->GetRotation();
 			SavedHidden[Ptr] = Piece->IsHidden();
+			LivePieces.insert(Ptr);
 		}
 
+		// mGhostPositions/mGhostRotations are keyed by raw lcPiece* set whenever the Animate dock
+		// last called SetGhostFrame - if a piece referenced there was deleted (or replaced by
+		// undo/redo recreating it at a new address) since then, without this check the key would be
+		// a dangling pointer and dereferencing it below would be a use-after-free.
 		for (auto It = mGhostPositions.constBegin(); It != mGhostPositions.constEnd(); ++It)
 		{
+			if (!LivePieces.contains(It.key()))
+				continue;
+
 			It.key()->SetPosition(It.value(), 1, false);
 			It.key()->SetRotation(mGhostRotations.value(It.key()), 1, false);
 			It.key()->SetHidden(false);

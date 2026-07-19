@@ -630,12 +630,12 @@ void lcAnimateWidget::Update()
 				}
 			}
 
-			if (!mAutoKeyframeInitialized)
+			if (!State.AutoKeyframeInitialized)
 			{
-				mLastAutoKeyframeDigest = CurrentSnapshot;
-				mAutoKeyframeInitialized = true;
+				State.LastAutoKeyframeDigest = CurrentSnapshot;
+				State.AutoKeyframeInitialized = true;
 			}
-			else if (CurrentSnapshot.Positions != mLastAutoKeyframeDigest.Positions || CurrentSnapshot.Rotations != mLastAutoKeyframeDigest.Rotations)
+			else if (CurrentSnapshot.Positions != State.LastAutoKeyframeDigest.Positions || CurrentSnapshot.Rotations != State.LastAutoKeyframeDigest.Rotations)
 			{
 				lcKeyframePoint Pt;
 				Pt.Time = State.CurrentFrameIndex;
@@ -652,7 +652,7 @@ void lcAnimateWidget::Update()
 				BakeKeyframes(Model, State);
 				RefreshFilmstrip(Model);
 
-				mLastAutoKeyframeDigest = CurrentSnapshot;
+				State.LastAutoKeyframeDigest = CurrentSnapshot;
 			}
 		}
 	}
@@ -706,6 +706,12 @@ void lcAnimateWidget::DuplicateClicked()
 
 	// See the comment in CaptureClicked: no history wrapper, this doesn't touch piece data.
 	lcAnimateDocumentState& State = GetState(Model);
+
+	// Frames can be empty here in Constant Keyframe mode (Clear/Delete Keyframe can drop it to 0
+	// while this button stays visible) - without this guard, both indexing operations below are
+	// undefined behavior on an empty vector.
+	if (State.Frames.empty())
+		return;
 
 	const int InsertIndex = State.CurrentFrameIndex + 1;
 	State.Frames.insert(State.Frames.begin() + InsertIndex, State.Frames[State.CurrentFrameIndex]);
@@ -987,6 +993,104 @@ void lcAnimateWidget::MirrorPoseClicked()
 	mSkipAutoKeyframe = false;
 }
 
+// Shared by WalkCycleClicked/RagdollClicked: after procedurally regenerating State.Frames, mirror
+// it into State.Keyframes (one keyframe per frame, Linear easing) so Constant Keyframe mode's later
+// BakeKeyframes reproduces the full generated motion instead of a two-point start→end lerp. No-op
+// outside Constant Keyframe mode.
+static void RebuildKeyframesFromFrames(lcAnimateDocumentState& State)
+{
+	if (State.AnimateMode != lcAnimateMode::ConstantKeyframe)
+		return;
+
+	State.Keyframes.clear();
+
+	for (int i = 0; i < (int)State.Frames.size(); i++)
+	{
+		lcKeyframePoint Kf;
+		Kf.Time = i;
+		Kf.Pose.Positions = State.Frames[i].Positions;
+		Kf.Pose.Rotations = State.Frames[i].Rotations;
+		Kf.Pose.CameraPosition = State.Frames[i].CameraPosition;
+		Kf.Pose.CameraTarget = State.Frames[i].CameraTarget;
+		Kf.Pose.CameraUpVector = State.Frames[i].CameraUpVector;
+		Kf.Pose.CameraProjection = State.Frames[i].CameraProjection;
+		Kf.Pose.HasCamera = State.Frames[i].HasCamera;
+		Kf.SegmentEasing = lcEasingType::Linear;
+		State.Keyframes.push_back(Kf);
+	}
+}
+
+void lcAnimateWidget::ShowMinifigProjectionGhost(lcModel* Model, const QMap<lcPiece*, lcVector3>& GhostPositions, const QMap<lcPiece*, lcMatrix33>& GhostRotations)
+{
+	lcView* ActiveView = gMainWindow->GetActiveView();
+
+	if (!ActiveView || !Model || GhostPositions.isEmpty())
+		return;
+
+	// OpenGL ghost pass (viewport overlay drawn by lcView::OnDraw).
+	ActiveView->SetGhostFrame(GhostPositions, GhostRotations, 0.3f);
+
+	// Render a QImage overlay at small size as a guaranteed-visibility fallback for configurations
+	// where the OpenGL ghost pass doesn't reliably composite.
+	QMap<lcPiece*, lcVector3> SavedPos;
+	QMap<lcPiece*, lcMatrix33> SavedRot;
+	QMap<lcPiece*, bool> SavedHidden;
+
+	for (const std::unique_ptr<lcPiece>& P : Model->GetPieces())
+	{
+		lcPiece* Ptr = P.get();
+		SavedPos[Ptr] = Ptr->GetPosition();
+		SavedRot[Ptr] = Ptr->GetRotation();
+		SavedHidden[Ptr] = P->IsHidden();
+	}
+
+	for (auto It = GhostPositions.constBegin(); It != GhostPositions.constEnd(); ++It)
+	{
+		It.key()->SetPosition(It.value(), 1, false);
+		It.key()->SetRotation(GhostRotations.value(It.key()), 1, false);
+		It.key()->SetHidden(false);
+	}
+	Model->SetCurrentStep(1);
+
+	lcView TempView(lcViewType::View, Model);
+	TempView.SetOffscreenContext();
+	TempView.MakeCurrent();
+
+	const int PW = 320, PH = 240;
+	TempView.SetSize(PW, PH);
+
+	lcCamera* Cam = ActiveView->GetCamera();
+	if (Cam)
+	{
+		TempView.GetCamera()->CopyPosition(Cam);
+		TempView.GetCamera()->SetProjection(Cam->GetProjection());
+	}
+
+	QImage RenderedGhost;
+	std::vector<QImage> Images = TempView.GetStepImages(1, 1);
+	if (!Images.empty())
+		RenderedGhost = Images.front().scaled(PW, PH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+	for (auto It = SavedPos.constBegin(); It != SavedPos.constEnd(); ++It)
+	{
+		It.key()->SetPosition(It.value(), 1, false);
+		It.key()->SetRotation(SavedRot.value(It.key()), 1, false);
+		It.key()->SetHidden(SavedHidden.value(It.key()));
+	}
+	Model->SetCurrentStep(1);
+
+	// Restore+SetCurrentStep may have triggered Update()->RefreshOnionSkin(), which clears ghosts.
+	// Re-apply immediately so the ghost stays visible during dialog interaction.
+	ActiveView->SetGhostFrame(GhostPositions, GhostRotations, 0.3f);
+
+	if (!RenderedGhost.isNull())
+	{
+		lcViewWidget* W = ActiveView->GetWidget();
+		if (W)
+			W->ShowGhostImage(RenderedGhost);
+	}
+}
+
 void lcAnimateWidget::WalkCycleClicked()
 {
 	lcModel* Model = lcGetActiveModel();
@@ -1143,10 +1247,6 @@ void lcAnimateWidget::WalkCycleClicked()
 
 	auto UpdateWalkProjection = [&]()
 	{
-		lcView* ActiveView = gMainWindow->GetActiveView();
-		if (!ActiveView || !Model)
-			return;
-
 		const float DirRad = LC_DTOR * static_cast<float>(DirSpin->value());
 		const lcVector3 ForwardAxis(-sinf(DirRad), -cosf(DirRad), 0.0f);
 		const float Travel = 2.0f * LegLen * sinf(LC_DTOR * static_cast<float>(StrideSpin->value()));
@@ -1165,73 +1265,7 @@ void lcAnimateWidget::WalkCycleClicked()
 			}
 		}
 
-		if (!GhostPos.isEmpty())
-			ActiveView->SetGhostFrame(GhostPos, GhostRot, 0.3f);
-
-		// Render a QImage overlay at small size as guaranteed-visibility fallback
-		QMap<lcPiece*, lcVector3> SavedPos;
-		QMap<lcPiece*, lcMatrix33> SavedRot;
-		QMap<lcPiece*, bool> SavedHidden;
-
-		for (const std::unique_ptr<lcPiece>& P : Model->GetPieces())
-		{
-			lcPiece* Ptr = P.get();
-			SavedPos[Ptr] = Ptr->GetPosition();
-			SavedRot[Ptr] = Ptr->GetRotation();
-			SavedHidden[Ptr] = P->IsHidden();
-		}
-
-		for (auto It = GhostPos.constBegin(); It != GhostPos.constEnd(); ++It)
-		{
-			It.key()->SetPosition(It.value(), 1, false);
-			It.key()->SetRotation(GhostRot.value(It.key()), 1, false);
-			It.key()->SetHidden(false);
-		}
-		Model->SetCurrentStep(1);
-
-		lcView TempView(lcViewType::View, Model);
-		TempView.SetOffscreenContext();
-		TempView.MakeCurrent();
-
-		const int PW = 320, PH = 240;
-		TempView.SetSize(PW, PH);
-
-		lcCamera* Cam = ActiveView->GetCamera();
-		if (Cam)
-		{
-			TempView.GetCamera()->CopyPosition(Cam);
-			TempView.GetCamera()->SetProjection(Cam->GetProjection());
-		}
-
-		QImage RenderedGhost;
-		std::vector<QImage> Images = TempView.GetStepImages(1, 1);
-		if (!Images.empty())
-		{
-			RenderedGhost = Images.front().scaled(PW, PH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-
-			lcViewWidget* W = ActiveView->GetWidget();
-			if (W)
-				W->ShowGhostImage(RenderedGhost);
-		}
-
-		for (auto It = SavedPos.constBegin(); It != SavedPos.constEnd(); ++It)
-		{
-			It.key()->SetPosition(It.value(), 1, false);
-			It.key()->SetRotation(SavedRot.value(It.key()), 1, false);
-			It.key()->SetHidden(SavedHidden.value(It.key()));
-		}
-		Model->SetCurrentStep(1);
-
-		// Restore+SetCurrentStep may have triggered Update()->RefreshOnionSkin() which clears ghosts.
-		// Re-apply immediately so the ghost stays visible during dialog interaction.
-		if (!GhostPos.isEmpty())
-			ActiveView->SetGhostFrame(GhostPos, GhostRot, 0.3f);
-		if (!RenderedGhost.isNull())
-		{
-			lcViewWidget* W = ActiveView->GetWidget();
-			if (W)
-				W->ShowGhostImage(RenderedGhost);
-		}
+		ShowMinifigProjectionGhost(Model, GhostPos, GhostRot);
 	};
 
 	bool DistanceGuard = false;
@@ -1478,42 +1512,28 @@ void lcAnimateWidget::WalkCycleClicked()
 		NewFrames.push_back(SnapshotFrame(Model));
 	}
 
+	// No RunInHistorySequence wrapper here (unlike Attach to Hand / Mirror Pose): every piece this
+	// loop moved gets set back to NeutralFrame by ApplyFrame(..., 0) below, so net piece state is
+	// unchanged start-to-finish - there is nothing for LeoCAD's undo system to record. The generated
+	// motion lives entirely in State.Frames/Keyframes, which (same as Capture/Duplicate/Delete
+	// Frame) isn't undoable via Ctrl+Z yet.
 	mSkipAutoKeyframe = true;
-	Model->RunInHistorySequence(tr("Walk Cycle"), [&]()
-	{
-		lcAnimateDocumentState& State = GetState(Model);
-		State.Frames = std::move(NewFrames);
-		State.CurrentFrameIndex = 0;
-		State.ThumbnailCache.clear();
 
-		// In Constant Keyframe mode, create a keyframe at every frame so any later
-		// BakeKeyframes preserves the full walk cycle (not just start→end lerp).
-		if (State.AnimateMode == lcAnimateMode::ConstantKeyframe)
-		{
-			State.Keyframes.clear();
-			for (int i = 0; i < (int)State.Frames.size(); i++)
-			{
-				lcKeyframePoint Kf;
-				Kf.Time = i;
-				Kf.Pose.Positions = State.Frames[i].Positions;
-				Kf.Pose.Rotations = State.Frames[i].Rotations;
-				Kf.Pose.CameraPosition = State.Frames[i].CameraPosition;
-				Kf.Pose.CameraTarget = State.Frames[i].CameraTarget;
-				Kf.Pose.CameraUpVector = State.Frames[i].CameraUpVector;
-				Kf.Pose.CameraProjection = State.Frames[i].CameraProjection;
-				Kf.Pose.HasCamera = State.Frames[i].HasCamera;
-				Kf.SegmentEasing = lcEasingType::Linear;
-				State.Keyframes.push_back(Kf);
-			}
-		}
-	});
+	lcAnimateDocumentState& State = GetState(Model);
+	State.Frames = std::move(NewFrames);
+	State.CurrentFrameIndex = 0;
+	State.ThumbnailCache.clear();
+
+	// In Constant Keyframe mode, create a keyframe at every frame so any later BakeKeyframes
+	// preserves the full walk cycle (not just start→end lerp).
+	RebuildKeyframesFromFrames(State);
 
 	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
 	mSkipAutoKeyframe = false;
 
 	// Prevent auto-keyframe from detecting the just-applied walk cycle pose as "changed"
 	// and calling BakeKeyframes (which would regen from keyframes and lose the motion).
-	mLastAutoKeyframeDigest = SnapshotFrame(Model);
+	GetState(Model).LastAutoKeyframeDigest = SnapshotFrame(Model);
 
 	mTimelineWidget->SetKeyframes(&GetState(Model).Keyframes);
 	mTimelineWidget->SetFrameRange(0, std::max((int)GetState(Model).Frames.size(), 10));
@@ -1612,9 +1632,10 @@ void lcAnimateWidget::RagdollClicked()
 	Form->addRow(tr("Direction:"), DirSpin);
 
 	QDoubleSpinBox* KnockbackSpin = new QDoubleSpinBox(&Dialog);
-	KnockbackSpin->setRange(1.0, 50.0);
-	KnockbackSpin->setValue(8.0);
+	KnockbackSpin->setRange(0.0, 50.0);
+	KnockbackSpin->setValue(2.0);
 	KnockbackSpin->setSuffix(tr(" studs"));
+	KnockbackSpin->setToolTip(tr("How hard the hit was - low values also calm down the limb flailing (see presets)"));
 	Form->addRow(tr("Knockback:"), KnockbackSpin);
 
 	QDoubleSpinBox* HeightSpin = new QDoubleSpinBox(&Dialog);
@@ -1630,10 +1651,6 @@ void lcAnimateWidget::RagdollClicked()
 
 	auto UpdateRagdollProjection = [&]()
 	{
-		lcView* ActiveView = gMainWindow->GetActiveView();
-		if (!ActiveView || !Model)
-			return;
-
 		const float RDirRad = LC_DTOR * static_cast<float>(DirSpin->value());
 		const lcVector3 RAxis(-sinf(RDirRad), -cosf(RDirRad), 0.0f);
 		const float RKnockback = static_cast<float>(KnockbackSpin->value() * 20.0f);
@@ -1651,18 +1668,17 @@ void lcAnimateWidget::RagdollClicked()
 			}
 		}
 
-		if (!GhostPos.isEmpty())
-			ActiveView->SetGhostFrame(GhostPos, GhostRot, 0.3f);
+		ShowMinifigProjectionGhost(Model, GhostPos, GhostRot);
 	};
 
 	auto ApplyPreset = [&]()
 	{
 		switch (PresetCombo->currentIndex())
 		{
-		case 0: DirSpin->setValue(180.0); KnockbackSpin->setValue(4.0);  HeightSpin->setValue(2.0);  FramesSpin->setValue(16); break;
-		case 1: DirSpin->setValue(180.0); KnockbackSpin->setValue(12.0); HeightSpin->setValue(4.0);  FramesSpin->setValue(20); break;
-		case 2: DirSpin->setValue(180.0); KnockbackSpin->setValue(3.0);  HeightSpin->setValue(20.0); FramesSpin->setValue(36); break;
-		case 3: DirSpin->setValue(180.0); KnockbackSpin->setValue(20.0); HeightSpin->setValue(10.0); FramesSpin->setValue(30); break;
+		case 0: DirSpin->setValue(180.0); KnockbackSpin->setValue(3.0);  HeightSpin->setValue(1.5);  FramesSpin->setValue(16); break; // Punched: stagger back a step, then fall
+		case 1: DirSpin->setValue(180.0); KnockbackSpin->setValue(0.5); HeightSpin->setValue(1.0);  FramesSpin->setValue(18); break; // Got shot: legs buckle, mostly straight down
+		case 2: DirSpin->setValue(180.0); KnockbackSpin->setValue(1.5); HeightSpin->setValue(20.0); FramesSpin->setValue(36); break; // Fell off cliff: height-dominant, little horizontal
+		case 3: DirSpin->setValue(180.0); KnockbackSpin->setValue(20.0); HeightSpin->setValue(10.0); FramesSpin->setValue(30); break; // Explosion: full knockback + flailing
 		}
 		UpdateRagdollProjection();
 	};
@@ -1691,6 +1707,13 @@ void lcAnimateWidget::RagdollClicked()
 	const float BaseKnockbackLDU = static_cast<float>(KnockbackSpin->value() * 20.0f);
 	const float HeightLDU = static_cast<float>(HeightSpin->value() * 20.0f);
 	const lcVector3 ForwardAxis(-sinf(DirRad), -cosf(DirRad), 0.0f);
+
+	// How hard the hit was, derived from Knockback rather than a separate slider: a "Got shot, just
+	// drops" death (small Knockback) gets a small, controlled buckle-and-collapse instead of the same
+	// wild flailing as a big "Explosion" knockback. Floors are non-zero so even the calmest death
+	// still has some natural settle instead of looking perfectly rigid.
+	const float Intensity = qBound(0.2f, static_cast<float>(KnockbackSpin->value()) / 10.0f, 1.0f);
+	const float TumbleScale = qBound(0.35f, Intensity, 1.0f);
 
 	// per-run randomness so no two death anims are identical
 	qsizetype Seed = static_cast<qsizetype>(QTime::currentTime().msecsSinceStartOfDay()) ^ reinterpret_cast<qsizetype>(Model);
@@ -1721,6 +1744,74 @@ void lcAnimateWidget::RagdollClicked()
 	for (lcPiece* Piece : TorsoPieces)
 		BodyCenter += StartPoses[Piece].Position;
 	BodyCenter /= static_cast<float>(TorsoPieces.size());
+
+	// Reuses MinifigWizard's own angle-to-matrix math for arm/leg/neck pivots (the same code Walk
+	// Cycle and the Minifig Wizard itself use) so each limb swings from its actual joint instead of
+	// spinning around the body's center of mass like a rigid flag - this is what makes a fall read
+	// as an articulated ragdoll instead of one solid tumbling block with limbs pasted on.
+	static MinifigWizard* RagdollWizard = new MinifigWizard();
+
+	auto FindRagdollPieceForSlot = [&](const std::vector<lcPiece*>& Pieces, int SlotType) -> lcPiece*
+	{
+		for (lcPiece* Piece : Pieces)
+			for (const lcMinifigPieceInfo& Entry : RagdollWizard->mSettings[SlotType])
+				if (Entry.Info == Piece->mPieceInfo)
+					return Piece;
+		return Pieces.empty() ? nullptr : Pieces.front();
+	};
+
+	lcMatrix44 RArmNeutralInv = lcMatrix44Identity();
+	lcMatrix44 LArmNeutralInv = lcMatrix44Identity();
+	lcMatrix44 RLegNeutralInv = lcMatrix44Identity();
+	lcMatrix44 LLegNeutralInv = lcMatrix44Identity();
+	lcVector3 NeckPivot = BodyCenter;
+
+	if (lcPiece* RArmPiece = FindRagdollPieceForSlot(RightArmPieces, LC_MFW_RARM))
+	{
+		RagdollWizard->SetPieceInfo(LC_MFW_RARM, RArmPiece->mPieceInfo);
+		RagdollWizard->SetAngle(LC_MFW_RARM, 0.0f);
+		RArmNeutralInv = lcMatrix44AffineInverse(RagdollWizard->mMinifig.Matrices[LC_MFW_RARM]);
+	}
+	if (lcPiece* LArmPiece = FindRagdollPieceForSlot(LeftArmPieces, LC_MFW_LARM))
+	{
+		RagdollWizard->SetPieceInfo(LC_MFW_LARM, LArmPiece->mPieceInfo);
+		RagdollWizard->SetAngle(LC_MFW_LARM, 0.0f);
+		LArmNeutralInv = lcMatrix44AffineInverse(RagdollWizard->mMinifig.Matrices[LC_MFW_LARM]);
+	}
+	if (lcPiece* RLegPiece = FindRagdollPieceForSlot(RightLegPieces, LC_MFW_RLEG))
+	{
+		RagdollWizard->SetPieceInfo(LC_MFW_RLEG, RLegPiece->mPieceInfo);
+		RagdollWizard->SetAngle(LC_MFW_RLEG, 0.0f);
+		RLegNeutralInv = lcMatrix44AffineInverse(RagdollWizard->mMinifig.Matrices[LC_MFW_RLEG]);
+	}
+	if (lcPiece* LLegPiece = FindRagdollPieceForSlot(LeftLegPieces, LC_MFW_LLEG))
+	{
+		RagdollWizard->SetPieceInfo(LC_MFW_LLEG, LLegPiece->mPieceInfo);
+		RagdollWizard->SetAngle(LC_MFW_LLEG, 0.0f);
+		LLegNeutralInv = lcMatrix44AffineInverse(RagdollWizard->mMinifig.Matrices[LC_MFW_LLEG]);
+	}
+	if (lcPiece* HeadPiece = FindRagdollPieceForSlot(HeadPieces, LC_MFW_HEAD))
+	{
+		RagdollWizard->SetPieceInfo(LC_MFW_HEAD, HeadPiece->mPieceInfo);
+		RagdollWizard->SetAngle(LC_MFW_HEAD, 0.0f);
+		NeckPivot = RagdollWizard->mMinifig.Matrices[LC_MFW_HEAD].GetTranslation();
+	}
+
+	// Per-piece jitter on top of the shared per-group scatter direction, so a multi-piece limb (e.g.
+	// an arm group containing both the forearm and a hand piece) visibly separates piece-from-piece
+	// at impact instead of moving as one perfectly rigid block - a cheap stand-in for true per-joint
+	// unsocketing given groups only track minifig-family membership, not a joint graph.
+	QMap<lcPiece*, lcVector3> PerPieceScatterJitter;
+	auto AssignJitter = [&](const std::vector<lcPiece*>& Pieces)
+	{
+		for (lcPiece* Piece : Pieces)
+			PerPieceScatterJitter[Piece] = lcVector3(RF(-1.0f, 1.0f), RF(-1.0f, 1.0f), RF(-1.0f, 1.0f)) * RF(2.0f, 8.0f);
+	};
+	AssignJitter(HeadPieces);
+	AssignJitter(RightArmPieces);
+	AssignJitter(LeftArmPieces);
+	AssignJitter(RightLegPieces);
+	AssignJitter(LeftLegPieces);
 
 	// per-group scatter offsets triggered at impact (unsocketing)
 	const lcVector3 RightArmScatter = lcVector3(1.0f, -0.3f, 0.3f) * RF(0.3f, 0.7f);
@@ -1774,6 +1865,7 @@ void lcAnimateWidget::RagdollClicked()
 		else if (t < ImpactFrame) TumbleAngle = 110.0f + (t - 0.50f) / (ImpactFrame - 0.50f) * 30.0f + RF(-10.0f, 10.0f);
 		else if (t < ImpactFrame + 0.05f) TumbleAngle = 140.0f - (t - ImpactFrame) / 0.05f * 40.0f;
 		else                TumbleAngle = 100.0f - (t - ImpactFrame - 0.05f) / (1.0f - ImpactFrame - 0.05f) * 10.0f;
+		TumbleAngle *= TumbleScale;
 
 		const lcMatrix33 BodyRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(TumbleAxis.x, TumbleAxis.y, TumbleAxis.z, LC_DTOR * TumbleAngle)));
 
@@ -1791,36 +1883,58 @@ void lcAnimateWidget::RagdollClicked()
 		const lcVector3 HeadOffset  = HeadScatter * KnockbackLDU * ScatterScale;
 
 		// === Limb rotations ===
-		// each limb gets per-run random noise so flailing looks different every time
-		const float armFlail = (t < 0.10f) ? 0.0f :
-			(t < 0.50f) ? (t - 0.10f) / 0.40f * RF(140.0f, 170.0f) + sinf(t * LC_2PI * RF(1.5f, 3.0f) + RF(0.0f, LC_2PI)) * RF(10.0f, 30.0f) :
-			(t < ImpactFrame + 0.05f) ? RF(160.0f, 190.0f) + sinf(t * LC_2PI * RF(2.0f, 4.0f) + RF(0.0f, LC_2PI)) * 15.0f :
-			RF(130.0f, 170.0f) - ScatterT * RF(20.0f, 50.0f) + sinf(t * LC_2PI * RF(1.5f, 3.0f) + RF(0.0f, LC_2PI)) * 10.0f;
+		// Peak angles and noise are scaled by Intensity so a calm "Got shot" death gets a controlled
+		// buckle instead of the same full-windmill flailing as a big "Explosion" knockback; each limb
+		// still gets per-run random noise (reduced frequency so it reads as a settle, not a vibration).
+		const float armFlail = (t < 0.10f) ? 0.0f : Intensity * (
+			(t < 0.50f) ? (t - 0.10f) / 0.40f * RF(80.0f, 100.0f) + sinf(t * LC_2PI * RF(0.8f, 1.5f) + RF(0.0f, LC_2PI)) * RF(5.0f, 15.0f) :
+			(t < ImpactFrame + 0.05f) ? RF(90.0f, 110.0f) + sinf(t * LC_2PI * RF(1.0f, 2.0f) + RF(0.0f, LC_2PI)) * 8.0f :
+			RF(70.0f, 100.0f) - ScatterT * RF(15.0f, 35.0f) + sinf(t * LC_2PI * RF(0.8f, 1.5f) + RF(0.0f, LC_2PI)) * 5.0f);
 
-		const float legSplay = (t < 0.10f) ? 0.0f :
-			(t < 0.40f) ? (t - 0.10f) / 0.30f * RF(40.0f, 70.0f) :
-			(t < ImpactFrame) ? RF(50.0f, 80.0f) + (t - 0.40f) / (ImpactFrame - 0.40f) * RF(10.0f, 30.0f) + sinf(t * LC_2PI * RF(1.0f, 2.5f) + RF(0.0f, LC_2PI)) * 10.0f :
-			RF(60.0f, 90.0f) + ScatterT * RF(20.0f, 40.0f);
+		const float legSplay = (t < 0.10f) ? 0.0f : Intensity * (
+			(t < 0.40f) ? (t - 0.10f) / 0.30f * RF(25.0f, 45.0f) :
+			(t < ImpactFrame) ? RF(30.0f, 50.0f) + (t - 0.40f) / (ImpactFrame - 0.40f) * RF(8.0f, 20.0f) + sinf(t * LC_2PI * RF(0.6f, 1.2f) + RF(0.0f, LC_2PI)) * 5.0f :
+			RF(35.0f, 55.0f) + ScatterT * RF(12.0f, 25.0f));
 
-		const float headLag = (t < 0.10f) ? 0.0f :
-			(t < 0.50f) ? (t - 0.10f) / 0.40f * RF(60.0f, 90.0f) + sinf(t * LC_2PI * 4.0f + RF(0.0f, LC_2PI)) * 10.0f :
-			(t < ImpactFrame + 0.05f) ? RF(70.0f, 100.0f) + (t - 0.50f) / (ImpactFrame + 0.05f - 0.50f) * RF(20.0f, 40.0f) :
-			RF(80.0f, 110.0f) - ScatterT * RF(10.0f, 30.0f);
+		const float headLag = (t < 0.10f) ? 0.0f : Intensity * (
+			(t < 0.50f) ? (t - 0.10f) / 0.40f * RF(35.0f, 55.0f) + sinf(t * LC_2PI * 2.0f + RF(0.0f, LC_2PI)) * 5.0f :
+			(t < ImpactFrame + 0.05f) ? RF(40.0f, 60.0f) + (t - 0.50f) / (ImpactFrame + 0.05f - 0.50f) * RF(12.0f, 25.0f) :
+			RF(45.0f, 65.0f) - ScatterT * RF(6.0f, 18.0f));
 
-		const lcMatrix33 RArmRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * -armFlail)));
-		const lcMatrix33 LArmRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * armFlail)));
-		const lcMatrix33 RLegRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * -legSplay)));
-		const lcMatrix33 LLegRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * legSplay)));
-		const lcMatrix33 HeadRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(TumbleAxis.x, TumbleAxis.y, TumbleAxis.z, LC_DTOR * -headLag)));
-		const lcMatrix33 Identity = lcMatrix33Identity();
+		// Joint deltas computed the same way Walk Cycle computes hip deltas: angle -> wizard matrix at
+		// that angle -> composed against the neutral (angle 0) inverse. Applying this to a piece's
+		// StartMatrix rotates/translates it about the joint's real pivot (shoulder/hip), not BodyCenter.
+		RagdollWizard->SetAngle(LC_MFW_RARM, -armFlail);
+		const lcMatrix44 RArmDelta = lcMul(RagdollWizard->mMinifig.Matrices[LC_MFW_RARM], RArmNeutralInv);
+		RagdollWizard->SetAngle(LC_MFW_LARM, armFlail);
+		const lcMatrix44 LArmDelta = lcMul(RagdollWizard->mMinifig.Matrices[LC_MFW_LARM], LArmNeutralInv);
+		RagdollWizard->SetAngle(LC_MFW_RLEG, -legSplay);
+		const lcMatrix44 RLegDelta = lcMul(RagdollWizard->mMinifig.Matrices[LC_MFW_RLEG], RLegNeutralInv);
+		RagdollWizard->SetAngle(LC_MFW_LLEG, legSplay);
+		const lcMatrix44 LLegDelta = lcMul(RagdollWizard->mMinifig.Matrices[LC_MFW_LLEG], LLegNeutralInv);
 
-		auto ApplyToPieces = [&](const std::vector<lcPiece*>& Pieces, const lcMatrix33& ExtraRot, const lcVector3& Offset)
+		// Head has no wizard-driven single-axis angle usable for a backward/sideways flop, so it
+		// keeps a free axis-angle rotation - but pivots on NeckPivot (from the wizard) instead of
+		// BodyCenter, so it hinges at the neck instead of swinging from the middle of the torso.
+		const lcMatrix33 HeadFlop = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(TumbleAxis.x, TumbleAxis.y, TumbleAxis.z, LC_DTOR * -headLag)));
+		const lcMatrix44 Identity44 = lcMatrix44Identity();
+
+		// Composes a piece's already-articulated local pose (joint swing about its real pivot) with
+		// the whole-body rigid transform (tumble about BodyCenter + BodyPos translation), then adds
+		// the post-impact scatter offset (shared per-group direction plus a per-piece jitter so
+		// multi-piece limbs visibly separate instead of drifting as one rigid block).
+		auto ApplyToPieces = [&](const std::vector<lcPiece*>& Pieces, const lcMatrix44& JointDelta, const lcVector3& Offset)
 		{
 			for (lcPiece* Piece : Pieces)
 			{
 				const lcStartPose& Start = StartPoses[Piece];
-				const lcVector3 NewPos = BodyPos + Offset + lcMul(Start.Position - BodyCenter, BodyRot) + BodyCenter;
-				const lcMatrix33 NewRot = lcMul(lcMul(Start.Rotation, BodyRot), ExtraRot);
+				const lcMatrix44 StartMatrix(Start.Rotation, Start.Position);
+				const lcMatrix44 Articulated = lcMul(JointDelta, StartMatrix);
+
+				const lcVector3 RelPos = Articulated.GetTranslation() - BodyCenter;
+				const lcVector3 PieceJitter = PerPieceScatterJitter.value(Piece) * ScatterScale * Intensity;
+				const lcVector3 NewPos = BodyPos + Offset + PieceJitter + lcMul(RelPos, BodyRot) + BodyCenter;
+				const lcMatrix33 NewRot = lcMul(lcMatrix33(Articulated), BodyRot);
 
 				Piece->SetPosition(NewPos, 1, false);
 				Piece->SetRotation(NewRot, 1, false);
@@ -1828,48 +1942,52 @@ void lcAnimateWidget::RagdollClicked()
 			}
 		};
 
-		ApplyToPieces(TorsoPieces, Identity, lcVector3(0.0f, 0.0f, 0.0f));
-		ApplyToPieces(OtherPieces, Identity, lcVector3(0.0f, 0.0f, 0.0f));
-		ApplyToPieces(HeadPieces, HeadRot, HeadOffset);
-		ApplyToPieces(RightArmPieces, RArmRot, RArmOffset);
-		ApplyToPieces(LeftArmPieces, LArmRot, LArmOffset);
-		ApplyToPieces(RightLegPieces, RLegRot, RLegOffset);
-		ApplyToPieces(LeftLegPieces, LLegRot, LLegOffset);
+		auto ApplyHeadPieces = [&]()
+		{
+			for (lcPiece* Piece : HeadPieces)
+			{
+				const lcStartPose& Start = StartPoses[Piece];
+				const lcVector3 ArticulatedPos = NeckPivot + lcMul(Start.Position - NeckPivot, HeadFlop);
+				const lcMatrix33 ArticulatedRot = lcMul(Start.Rotation, HeadFlop);
+
+				const lcVector3 RelPos = ArticulatedPos - BodyCenter;
+				const lcVector3 PieceJitter = PerPieceScatterJitter.value(Piece) * ScatterScale * Intensity;
+				const lcVector3 NewPos = BodyPos + HeadOffset + PieceJitter + lcMul(RelPos, BodyRot) + BodyCenter;
+				const lcMatrix33 NewRot = lcMul(ArticulatedRot, BodyRot);
+
+				Piece->SetPosition(NewPos, 1, false);
+				Piece->SetRotation(NewRot, 1, false);
+				Piece->UpdatePosition(1);
+			}
+		};
+
+		ApplyToPieces(TorsoPieces, Identity44, lcVector3(0.0f, 0.0f, 0.0f));
+		ApplyToPieces(OtherPieces, Identity44, lcVector3(0.0f, 0.0f, 0.0f));
+		ApplyHeadPieces();
+		ApplyToPieces(RightArmPieces, RArmDelta, RArmOffset);
+		ApplyToPieces(LeftArmPieces, LArmDelta, LArmOffset);
+		ApplyToPieces(RightLegPieces, RLegDelta, RLegOffset);
+		ApplyToPieces(LeftLegPieces, LLegDelta, LLegOffset);
 
 		NewFrames.push_back(SnapshotFrame(Model));
 	}
 
+	// See the comment in WalkCycleClicked: pieces end up back at NeutralFrame (net piece state
+	// unchanged), so there's nothing for LeoCAD's undo system to record - the generated motion lives
+	// entirely in State.Frames/Keyframes, same not-undoable-via-Ctrl+Z category as Capture/
+	// Duplicate/Delete Frame.
 	mSkipAutoKeyframe = true;
-	Model->RunInHistorySequence(tr("Ragdoll Death"), [&]()
-	{
-		lcAnimateDocumentState& State = GetState(Model);
-		State.Frames = std::move(NewFrames);
-		State.CurrentFrameIndex = 0;
-		State.ThumbnailCache.clear();
 
-		if (State.AnimateMode == lcAnimateMode::ConstantKeyframe)
-		{
-			State.Keyframes.clear();
-			for (int i = 0; i < (int)State.Frames.size(); i++)
-			{
-				lcKeyframePoint Kf;
-				Kf.Time = i;
-				Kf.Pose.Positions = State.Frames[i].Positions;
-				Kf.Pose.Rotations = State.Frames[i].Rotations;
-				Kf.Pose.CameraPosition = State.Frames[i].CameraPosition;
-				Kf.Pose.CameraTarget = State.Frames[i].CameraTarget;
-				Kf.Pose.CameraUpVector = State.Frames[i].CameraUpVector;
-				Kf.Pose.CameraProjection = State.Frames[i].CameraProjection;
-				Kf.Pose.HasCamera = State.Frames[i].HasCamera;
-				Kf.SegmentEasing = lcEasingType::Linear;
-				State.Keyframes.push_back(Kf);
-			}
-		}
-	});
+	lcAnimateDocumentState& State = GetState(Model);
+	State.Frames = std::move(NewFrames);
+	State.CurrentFrameIndex = 0;
+	State.ThumbnailCache.clear();
+
+	RebuildKeyframesFromFrames(State);
 
 	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
 	mSkipAutoKeyframe = false;
-	mLastAutoKeyframeDigest = SnapshotFrame(Model);
+	GetState(Model).LastAutoKeyframeDigest = SnapshotFrame(Model);
 
 	mTimelineWidget->SetKeyframes(&GetState(Model).Keyframes);
 	mTimelineWidget->SetFrameRange(0, std::max((int)GetState(Model).Frames.size(), 10));
@@ -1974,23 +2092,28 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 	State.Frames.resize(LastTime - FirstTime + 1);
 	State.ThumbnailCache.clear();
 
+	// Cursor into the (already time-sorted) Keyframes array. FrameTime only increases as i
+	// increases, so the bracketing pair can only ever advance forward - re-scanning from the start
+	// of Keyframes for every single output frame turned keyframe edits on long timelines into an
+	// O(FrameCount * KeyframeCount) stall; this makes it O(FrameCount + KeyframeCount).
+	size_t Cursor = 0;
+
 	for (int i = 0; i < (int)State.Frames.size(); i++)
 	{
 		lcAnimateFrame& Frame = State.Frames[i];
 		const int FrameTime = FirstTime + i;
 
+		while (Cursor + 2 < State.Keyframes.size() && FrameTime > State.Keyframes[Cursor + 1].Time)
+			Cursor++;
+
 		// Find the two keyframes bracketing this frame
 		const lcKeyframePoint* KfA = nullptr;
 		const lcKeyframePoint* KfB = nullptr;
 
-		for (size_t j = 0; j < State.Keyframes.size() - 1; j++)
+		if (FrameTime >= State.Keyframes[Cursor].Time && FrameTime <= State.Keyframes[Cursor + 1].Time)
 		{
-			if (FrameTime >= State.Keyframes[j].Time && FrameTime <= State.Keyframes[j + 1].Time)
-			{
-				KfA = &State.Keyframes[j];
-				KfB = &State.Keyframes[j + 1];
-				break;
-			}
+			KfA = &State.Keyframes[Cursor];
+			KfB = &State.Keyframes[Cursor + 1];
 		}
 
 		if (!KfA || !KfB)
@@ -2042,11 +2165,6 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 			else
 				Frame.Positions[It.key()] = It.value();
 		}
-		for (auto It = KfB->Pose.Positions.constBegin(); It != KfB->Pose.Positions.constEnd(); ++It)
-		{
-			if (!Frame.Positions.contains(It.key()))
-				continue; // not in KfA → doesn't exist yet at this frame time
-		}
 
 		// Interpolate rotations via axis-angle decomposition
 		// ponytail: axis-angle lerp is exact for single-axis rotations (handles all minifig poses)
@@ -2068,11 +2186,6 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 			const lcVector4 InterpQ = lcQuaternionFromAxisAngle(lcVector4(AxisAngle[0], AxisAngle[1], AxisAngle[2], InterpAngle));
 			const lcMatrix33 InterpRDelta = lcQuaternionToMatrix33(InterpQ);
 			Frame.Rotations[It.key()] = lcMul(InterpRDelta, It.value());
-		}
-		for (auto It = KfB->Pose.Rotations.constBegin(); It != KfB->Pose.Rotations.constEnd(); ++It)
-		{
-			if (!Frame.Rotations.contains(It.key()))
-				continue; // not in KfA → doesn't exist yet at this frame time
 		}
 
 		// Interpolate camera
@@ -2101,6 +2214,12 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 			Frame.HasCamera = true;
 		}
 	}
+
+	// Keeps CurrentFrameIndex a valid index into the just-rebuilt (possibly shrunk) Frames vector
+	// for every caller of BakeKeyframes, not just the ones that remember to clamp it themselves -
+	// an out-of-range index here was reachable via Duplicate/Delete Frame indexing Frames[] directly.
+	if (State.CurrentFrameIndex >= (int)State.Frames.size())
+		State.CurrentFrameIndex = std::max(0, (int)State.Frames.size() - 1);
 }
 
 void lcAnimateWidget::AddKeyframeClicked()
@@ -2161,6 +2280,8 @@ void lcAnimateWidget::DeleteKeyframeClicked()
 	if (State.Keyframes.size() < 2)
 	{
 		State.Frames.clear();
+		State.ThumbnailCache.clear();
+		State.CurrentFrameIndex = 0;
 	}
 	else
 	{
@@ -2182,6 +2303,7 @@ void lcAnimateWidget::ClearKeyframeClicked()
 	State.Keyframes.clear();
 	State.Frames.clear();
 	State.ThumbnailCache.clear();
+	State.CurrentFrameIndex = 0;
 	mTimelineWidget->SetKeyframes(&State.Keyframes);
 	RefreshFilmstrip(Model);
 	mTimelineWidget->update();
@@ -2267,6 +2389,16 @@ void lcAnimateWidget::ExportClicked()
 		PlayPauseClicked();
 
 	lcAnimateDocumentState& State = GetState(Model);
+
+	// Constant Keyframe mode can have zero baked Frames (e.g. right after Clear/Delete Keyframe
+	// drops below 2 keyframes). Without this guard, the export dialog's Start/End spin boxes
+	// degenerate to an empty [1,0] range that Qt collapses to a bogus value, and the render loop
+	// indexes the (empty) frame vector out of bounds.
+	if (State.Frames.empty())
+	{
+		QMessageBox::information(this, tr("Export Animation"), tr("There's nothing to export yet - capture a frame (Stop Motion) or add at least two keyframes (Constant Keyframe) first."));
+		return;
+	}
 
 	lcAnimateExportDialog Dialog(this, Model, mFpsSpinBox->value(), State.Frames);
 	Dialog.exec();
