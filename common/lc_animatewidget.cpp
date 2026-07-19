@@ -1083,22 +1083,39 @@ void lcAnimateWidget::WalkCycleClicked()
 	DirSpin->setToolTip(tr("0 = forward along +Y, 90 = along +X"));
 	Form->addRow(tr("Direction:"), DirSpin);
 
-	QLabel* DistLabel = new QLabel(&Dialog);
-	Form->addRow(tr("Total travel:"), DistLabel);
+	QDoubleSpinBox* DistSpin = new QDoubleSpinBox(&Dialog);
+	DistSpin->setRange(0.5, 500.0);
+	DistSpin->setDecimals(1);
+	DistSpin->setSuffix(tr(" studs"));
+	DistSpin->setSingleStep(0.5);
+	Form->addRow(tr("Total travel:"), DistSpin);
+
+	static MinifigWizard* TempWiz = new MinifigWizard();
+	TempWiz->SetPieceInfo(LC_MFW_RLEG, RightLegPieces.front()->mPieceInfo);
+	TempWiz->SetAngle(LC_MFW_RLEG, 0.0f);
+	const float LegLen = TempWiz->mMinifig.Matrices[LC_MFW_RLEG].r[3].z + 44.0f;
 
 	auto UpdateLabels = [&]()
 	{
 		const int speed = SpeedSlider->value();
 		const int steps = 4 + (10 - speed) * 4;
 		SpeedLabel->setText(tr("~%1 frames").arg(steps));
+	};
 
-		static MinifigWizard* TempWiz = new MinifigWizard();
-		TempWiz->SetPieceInfo(LC_MFW_RLEG, RightLegPieces.front()->mPieceInfo);
-		TempWiz->SetAngle(LC_MFW_RLEG, 0.0f);
-		const float LegLen = TempWiz->mMinifig.Matrices[LC_MFW_RLEG].r[3].z + 44.0f;
+	auto UpdateStrideFromDist = [&]()
+	{
+		const double distLdu = DistSpin->value() * 20.0;
+		const double ratio = distLdu / (2.0 * LegLen);
+		const double clamped = std::max(-1.0, std::min(1.0, ratio));
+		const double angle = LC_RTOD * asin(clamped);
+		StrideSpin->setValue(std::max(1.0, std::min(60.0, angle)));
+	};
+
+	auto UpdateDistFromStride = [&]()
+	{
 		const float Disp = LegLen * sinf(LC_DTOR * static_cast<float>(StrideSpin->value()));
 		const double travel = 2.0 * Disp;
-		DistLabel->setText(tr("%1 LDU (~%2 studs)").arg(travel, 0, 'f', 0).arg(travel / 20.0, 0, 'f', 1));
+		DistSpin->setValue(travel / 20.0);
 	};
 
 	auto UpdateFromGait = [&]()
@@ -1112,9 +1129,11 @@ void lcAnimateWidget::WalkCycleClicked()
 		UpdateLabels();
 	};
 
+	bool DistanceGuard = false;
 	QObject::connect(GaitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { UpdateFromGait(); });
 	QObject::connect(SpeedSlider, &QSlider::valueChanged, [&](int) { UpdateLabels(); });
-	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { UpdateLabels(); });
+	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateDistFromStride(); DistanceGuard = false; } UpdateLabels(); });
+	QObject::connect(DistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateStrideFromDist(); DistanceGuard = false; } });
 
 	QDialogButtonBox* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
 	Form->addRow(Buttons);
@@ -1122,6 +1141,7 @@ void lcAnimateWidget::WalkCycleClicked()
 	QObject::connect(Buttons, &QDialogButtonBox::rejected, &Dialog, &QDialog::reject);
 
 	UpdateFromGait();
+	UpdateDistFromStride();
 	if (!Dialog.exec())
 		return;
 
@@ -1344,10 +1364,41 @@ void lcAnimateWidget::WalkCycleClicked()
 		State.Frames = std::move(NewFrames);
 		State.CurrentFrameIndex = 0;
 		State.ThumbnailCache.clear();
+
+		// In Constant Keyframe mode, generate keyframes from the walk cycle frames
+		// so the timeline shows something and doesn't snap back to stale keyframes.
+		if (State.AnimateMode == lcAnimateMode::ConstantKeyframe)
+		{
+			State.Keyframes.clear();
+			lcKeyframePoint KfStart;
+			KfStart.Time = 0;
+			KfStart.Pose.Positions = State.Frames.front().Positions;
+			KfStart.Pose.Rotations = State.Frames.front().Rotations;
+			KfStart.Pose.CameraPosition = State.Frames.front().CameraPosition;
+			KfStart.Pose.CameraTarget = State.Frames.front().CameraTarget;
+			KfStart.Pose.CameraUpVector = State.Frames.front().CameraUpVector;
+			KfStart.Pose.CameraProjection = State.Frames.front().CameraProjection;
+			KfStart.Pose.HasCamera = State.Frames.front().HasCamera;
+			State.Keyframes.push_back(KfStart);
+
+			lcKeyframePoint KfEnd;
+			KfEnd.Time = (int)State.Frames.size() - 1;
+			KfEnd.Pose.Positions = State.Frames.back().Positions;
+			KfEnd.Pose.Rotations = State.Frames.back().Rotations;
+			KfEnd.Pose.CameraPosition = State.Frames.back().CameraPosition;
+			KfEnd.Pose.CameraTarget = State.Frames.back().CameraTarget;
+			KfEnd.Pose.CameraUpVector = State.Frames.back().CameraUpVector;
+			KfEnd.Pose.CameraProjection = State.Frames.back().CameraProjection;
+			KfEnd.Pose.HasCamera = State.Frames.back().HasCamera;
+			State.Keyframes.push_back(KfEnd);
+		}
 	});
 
 	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
 	mSkipAutoKeyframe = false;
+	mTimelineWidget->SetKeyframes(&GetState(Model).Keyframes);
+	mTimelineWidget->SetFrameRange(0, std::max((int)GetState(Model).Frames.size(), 10));
+	mTimelineWidget->SetCurrentTime(GetState(Model).CurrentFrameIndex);
 	Update();
 }
 
