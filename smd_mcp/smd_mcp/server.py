@@ -211,8 +211,8 @@ class LDrawProject:
 
 # StopMotionDigital (LeoCAD) actually writes "0 !LEOCAD GROUP BEGIN <name>" / "0 !LEOCAD GROUP END"
 # (see lc_model.cpp SaveLDraw) - NOT the bare "0 GROUP <n> <name>" MLCAD-style syntax these regexes
-# used to expect, which never matched a real project file (every read_project/generate_walk_cycle/
-# generate_ragdoll call against an app-saved file silently saw zero groups).
+# used to expect, which never matched a real project file (every read_project/
+# generate_walk_cycle call against an app-saved file silently saw zero groups).
 GROUP_BEGIN_RE = re.compile(r'0\s+!LEOCAD\s+GROUP\s+BEGIN\s+(.+)', re.I)
 GROUP_END_RE = re.compile(r'0\s+!LEOCAD\s+GROUP\s+END', re.I)
 # A Posable minifig's per-limb groups are tagged as belonging together via an explicit
@@ -288,8 +288,7 @@ def parse_ldraw(path: str | Path) -> LDrawProject:
 
     # Resolve MINIFIG_FAMILY lines now that every group has been seen. minifig_family ends up holding
     # the shared family group's NAME (e.g. "Minifig Right Arm #1") - group names don't carry a custom
-    # figure name (LeoCAD doesn't have one at this level), so that name string IS the stable identifier
-    # tools like generate_walk_cycle/generate_ragdoll use to mean "one minifig" (see get_project_status,
+    # tools like generate_walk_cycle use to mean "one minifig" (see get_project_status,
     # which surfaces the available identifiers via its "minifigs" list).
     for group, family_name in pending_family:
         group.minifig_family = family_name
@@ -478,69 +477,6 @@ def compute_walk_cycle_deltas(stride_angle: float, arm_swing: float,
                        "forward": fwd_vec.to_list(),
                        "step": step})
     return frames
-
-
-# ── ragdoll helpers ───────────────────────────────────────────────────────
-
-import random
-
-def compute_ragdoll_frames(direction: float, knockback: float,
-                           frames: int = 24, seed: int = 0) -> list[dict]:
-    """Generate ragdoll animation frames. Returns per-frame deltas."""
-    if seed:
-        random.seed(seed)
-    dir_rad = direction * DTOR
-    knock_dir = Vec3(-math.sin(dir_rad), -math.cos(dir_rad), 0)
-    hit_frame = int(frames * random.uniform(0.55, 0.65))
-    kb_scale = random.uniform(0.75, 1.25)
-    height_scale = random.uniform(0.7, 1.3)
-    dir_jitter = random.uniform(-10, 10) * DTOR
-
-    def jitter_dir(base: Vec3, j: float) -> Vec3:
-        c, s = math.cos(j), math.sin(j)
-        return Vec3(base.x*c - base.y*s, base.x*s + base.y*c, base.z)
-
-    scatter = {
-        "RARM": jitter_dir(Vec3(-0.5, 0.3, 0.8), dir_jitter),
-        "LARM": jitter_dir(Vec3(0.5, 0.3, 0.8), dir_jitter),
-        "RLEG": Vec3(-0.3, -0.3, 0.5),
-        "LLEG": Vec3(0.3, -0.3, 0.5),
-        "HEAD": Vec3(0, 0, 1.0),
-    }
-    noise_phases: dict[str, float] = {}
-    noise_amps: dict[str, float] = {}
-    for grp in scatter:
-        noise_phases[grp] = random.uniform(0, 2*PI)
-        noise_amps[grp] = random.uniform(0.5, 1.5)
-
-    result = []
-    for i in range(frames):
-        t = i / max(frames-1, 1)
-        raw_pos = knock_dir * knockback * kb_scale * t
-        raw_pos.z = 0
-        raw_pos.z = height_scale * 20 * (1 - t) if t < 0.3 else 0
-
-        # bounce
-        if t >= hit_frame / frames and t < (hit_frame+2)/frames:
-            raw_pos.z += 8 * (1 - abs(t - hit_frame/frames) * frames)
-            raw_pos = raw_pos + knock_dir * knockback * 0.3 * kb_scale
-
-        per_group: dict[str, dict] = {}
-        for grp, sdir in scatter.items():
-            falloff = max(0, 1 - t)
-            scatter_offset = Vec3(sdir.x, sdir.y, sdir.z) * knockback * 0.5 * falloff
-            noise_angle = noise_amps[grp] * math.sin(2*PI*t*3 + noise_phases[grp]) * 60 * falloff * DTOR
-            per_group[grp] = {
-                "scatter": scatter_offset.to_list(),
-                "rotation_noise": noise_angle
-            }
-
-        result.append({
-            "index": i,
-            "position": raw_pos.to_list(),
-            "per_group": per_group,
-        })
-    return result
 
 
 # ── MCP tools ─────────────────────────────────────────────────────────────
@@ -906,81 +842,6 @@ def export_video(project_path: str, output_path: str = "",
             "project": str(path), "output": output_path, "frame_rate": frame_rate}
 
 
-@mcp.tool()
-def generate_ragdoll(project_path: str, minifig_name: str,
-                     direction: float = 0.0,
-                     knockback: float = 8.0,
-                     frames: int = 24,
-                     seed: int = 0) -> dict[str, Any]:
-    """Generate ragdoll death animation frames for a minifig."""
-    path = Path(project_path).expanduser()
-    proj = parse_ldraw(path)
-    anim = load_animate_json(path) or AnimateData(model_name=Path(path).name)
-
-    fig_groups = [g for g in proj.groups if g.minifig_family.lower() == minifig_name.lower()]
-    if not fig_groups:
-        return {"error": f"No minifig '{minifig_name}' found"}
-
-    def pieces_in_group(name_part: str) -> list[int]:
-        for g in fig_groups:
-            if name_part.lower() in g.name.lower():
-                return g.piece_indices
-        return []
-
-    right_leg = pieces_in_group("RightLeg")
-    left_leg = pieces_in_group("LeftLeg")
-    right_arm = pieces_in_group("RightArm")
-    left_arm = pieces_in_group("LeftArm")
-    head = pieces_in_group("Head")
-    torso = pieces_in_group("Torso")
-    all_limb = set(right_leg + left_leg + right_arm + left_arm + head + torso)
-
-    rag_frames = compute_ragdoll_frames(direction, knockback, frames, seed)
-
-    start_pos: dict[int, Vec3] = {}
-    start_rot: dict[int, list[float]] = {}
-    for p in proj.pieces:
-        start_pos[p.index] = p.pos
-        start_rot[p.index] = p.rot
-
-    new_frames = []
-    for rf in rag_frames:
-        frame = AnimateFrame()
-        for p in proj.pieces:
-            idx = p.index
-            pos = start_pos[idx] + Vec3(*rf["position"])
-            rot = start_rot[idx][:]
-
-            if idx in all_limb:
-                # Determine which limb group
-                grp = "HEAD"
-                if idx in right_arm: grp = "RARM"
-                elif idx in left_arm: grp = "LARM"
-                elif idx in right_leg: grp = "RLEG"
-                elif idx in left_leg: grp = "LLEG"
-                elif idx in head: grp = "HEAD"
-
-                pg = rf["per_group"].get(grp, {})
-                scatter = pg.get("scatter", [0,0,0])
-                pos = pos + Vec3(*scatter)
-
-                noise_angle = pg.get("rotation_noise", 0)
-                if noise_angle != 0:
-                    rmat = Mat44.from_pos_rot(Vec3(0,0,0), rot)
-                    rnoise = Mat44.rotation_x(noise_angle * 0.5)
-                    rnoise2 = Mat44.rotation_z(noise_angle * 0.3)
-                    rmat = rmat.mul(rnoise).mul(rnoise2)
-                    rot = rmat.get_rotation_33()
-
-            frame.pieces[idx] = {"position": pos.to_list(), "rotation": rot}
-        new_frames.append(frame)
-
-    anim.frames.extend(new_frames)
-    save_animate_json(path, anim)
-    return {"frames_generated": len(new_frames), "total_frames": len(anim.frames),
-            "seed": seed, "minifig": minifig_name}
-
-
 # ── bezier / path helpers ────────────────────────────────────────────────
 
 def cubic_bezier(t: float, p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3) -> Vec3:
@@ -1015,7 +876,7 @@ def add_piece(project_path: str, filename: str, color_code: int = 4,
     piece joins the existing group). To build a Posable minifig's 6 limb groups (Head/Torso/
     RightArm/LeftArm/RightLeg/LeftLeg), pass minifig_family on each group's FIRST add_piece call -
     all 6 must use the exact same minifig_family string (conventionally the first group's own
-    group_name) so generate_walk_cycle/generate_ragdoll/get_project_status recognize them as one
+    group_name) so generate_walk_cycle/get_project_status recognize them as one
     minifig. This mirrors StopMotionDigital's own lcGroup::mMinifigFamily tag."""
     path = Path(project_path).expanduser()
     if not path.exists():

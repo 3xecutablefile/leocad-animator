@@ -442,8 +442,8 @@ void lcModel::SaveLDraw(QTextStream& Stream, bool SelectedOnly, lcStep LastStep)
 
 					// mMinifigFamily is a runtime-only pointer (see group.h) with no other
 					// serialization - without this, every group's family tag is silently lost on
-					// save/reload, breaking Walk Cycle/Ragdoll/Mirror Pose/Alt+click-select-minifig
-					// on any project that's been saved and reopened.
+					// save/reload, breaking Walk Cycle/Mirror Pose/Alt+click-select-minifig on any
+					// project that's been saved and reopened.
 					if (Group->mMinifigFamily)
 						Stream << QLatin1String("0 !LEOCAD GROUP MINIFIG_FAMILY ") << Group->mMinifigFamily->mName << LineEnding;
 				}

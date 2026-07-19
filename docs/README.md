@@ -63,16 +63,16 @@ one single group covering the entire minifig, so selecting any part selects
 `smd_mcp/` is an [MCP](https://modelcontextprotocol.io) server that lets an AI
 coding agent (Claude Code, opencode, etc.) build and animate a
 StopMotionDigital project directly — creating pieces, posing minifigs,
-generating walk cycles and ragdoll falls, keyframing, and exporting — by
-calling tools that edit the project's `.ldr` + `.animate.json` files, no GUI
-interaction required.
+generating walk cycles, keyframing, and exporting — by calling tools that
+edit the project's `.ldr` + `.animate.json` files, no GUI interaction
+required.
 
 - **Already registered for this repo**: `.mcp.json` (Claude Code) and
   `.opencode.jsonc` (opencode) at the repo root wire it up automatically —
   just open a session in this directory and approve the server when prompted.
-- **30 tools** covering project/scene setup, frame timeline editing, easing/
-  physics effects (bounce, swing, wave, explosion), procedural walk cycle and
-  ragdoll generation, and keyframe baking.
+- **29 tools** covering project/scene setup, frame timeline editing, easing/
+  physics effects (bounce, swing, wave, explosion), procedural walk cycle
+  generation, and keyframe baking.
 - Full setup instructions (including registering it in other repos) and the
   complete tool list: see [`smd_mcp/README.md`](../smd_mcp/README.md).
 - Architecture notes and the minifig-grouping data model an agent needs to

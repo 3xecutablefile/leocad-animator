@@ -81,7 +81,6 @@ gathering). Do not repurpose `lcGroup` for this.
 | Walk Cycle generator | `lc_animatewidget.cpp` | Dialog with gait (Walk/Jog/Run), stride angle, arm swing, direction, travel distance readout. Reuses `MinifigWizard::SetAngle/Calculate`. Per-slot wizard mapping for correct arm→hand chains |
 | Gait phase warping | `lc_animatewidget.cpp` | Walk = pure sine, Jog = peaky (2nd harmonic), Run = asymmetric phase modulation |
 | Walk cycle projection ghost | `lc_animatewidget.cpp` | Shows end position ghost in viewport while dialog is open; updates on parameter changes; cleared on dialog close |
-| Ragdoll Death generator dialog ghost | `lc_animatewidget.cpp` | Shows end position ghost in viewport while dialog is open |
 | Constant Keyframe mode | `lc_animatewidget.h/.cpp`, `lc_keyframetimelinewidget.h/.cpp` | Timeline widget, easing per-segment (Linear/EaseIn/EaseOut/EaseInOut), BakeKeyframes interpolator, mode selector (QComboBox). Default easing is now Linear |
 | Minifig Wizard "Posable" checkbox | `lc_minifigdialog.h/.cpp/.ui` | On by default |
 | CI: rolling "continuous" macOS DMG | `.github/workflows/release.yml`, `.github/workflows/continuous.yml` | Pinned to `macos-14` |
@@ -120,8 +119,9 @@ Key established facts (do not re-derive):
 - `lcView::OnDraw()` does two-pass: ghost pass (save pieces → un-hide pieces in ghost set → pose
   ghost → draw with `SetAlphaScale` + blending + no depth test → restore hidden/position/rotation
   → clear depth) then normal pass.
-- Projection ghosts added for Walk Cycle dialog and Ragdoll Death dialog (show final position in
-  viewport while dialog is open, update on parameter changes, clear on dialog close).
+- Projection ghost added for Walk Cycle dialog (shows final position in viewport while dialog is
+  open, updates on parameter changes, clears on dialog close). Factored into a shared
+  `ShowMinifigProjectionGhost` helper (was duplicated with the now-removed Ragdoll dialog).
 
 ### Walk Cycle
 - Dialog: gait preset (Walk/Jog/Run), stride angle, arm swing, direction (0-359 deg compass),
@@ -168,7 +168,7 @@ Key established facts (do not re-derive):
 Ran an 8-angle review (3 correctness, reuse, simplification, efficiency, altitude, conventions) over
 the full `upstream/master...HEAD` diff. Every CONFIRMED/PLAUSIBLE finding was fixed:
 - **`mMinifigFamily` was never persisted** (biggest find): `lcGroup::mMinifigFamily` is a runtime
-  pointer with no serialization, so Walk Cycle/Ragdoll/Mirror Pose/Alt+click-select-minifig silently
+  pointer with no serialization, so Walk Cycle/Mirror Pose/Alt+click-select-minifig silently
   stopped working on ANY project after save+reopen. Fixed by writing/reading a new
   `0 !LEOCAD GROUP MINIFIG_FAMILY <family-group-name>` LDraw meta line right after each group's
   `GROUP BEGIN` line (`lc_model.cpp` `SaveLDraw`/`LoadLDraw`). Load side resolves names to pointers
@@ -186,13 +186,13 @@ the full `upstream/master...HEAD` diff. Every CONFIRMED/PLAUSIBLE finding was fi
 - **`DuplicateClicked` missing empty-`Frames` guard**: `DeleteClicked` had one, `DuplicateClicked`
   didn't - reachable via Clear/Delete Keyframe dropping `State.Frames` to empty while the Duplicate
   button stays visible in Constant Keyframe mode. Added the guard.
-- **Walk Cycle / Ragdoll's `RunInHistorySequence` was a no-op**: piece mutations happened in a loop
-  *before* `RunInHistorySequence` was called, so `BeginEditHistory`'s `SaveStartState` snapshotted
-  the pieces already at their final generated pose; the callback itself never touched piece state
-  (net piece state returns to `NeutralFrame` via `ApplyFrame(..., 0)` at the end anyway) - so nothing
-  was ever pushed to the undo stack despite the misleading `tr("Walk Cycle")` description. Removed
-  the wrapper, added the same honest "not undoable via Ctrl+Z" disclosure Capture/Duplicate/Delete
-  Frame already have.
+- **Walk Cycle's `RunInHistorySequence` was a no-op**: piece mutations happened in a loop *before*
+  `RunInHistorySequence` was called, so `BeginEditHistory`'s `SaveStartState` snapshotted the pieces
+  already at their final generated pose; the callback itself never touched piece state (net piece
+  state returns to `NeutralFrame` via `ApplyFrame(..., 0)` at the end anyway) - so nothing was ever
+  pushed to the undo stack despite the misleading `tr("Walk Cycle")` description. Removed the
+  wrapper, added the same honest "not undoable via Ctrl+Z" disclosure Capture/Duplicate/Delete Frame
+  already have.
 - **`BakeKeyframes` O(FrameCount × KeyframeCount) bracket search**: re-scanned all keyframes for
   every output frame despite `Keyframes` being sorted - replaced with a single advancing cursor
   (O(FrameCount + KeyframeCount)). Also removed two dead no-op loops and added a `CurrentFrameIndex`
@@ -201,54 +201,30 @@ the full `upstream/master...HEAD` diff. Every CONFIRMED/PLAUSIBLE finding was fi
   to a degenerate range when `Frames` is empty (reachable via Clear/Delete Keyframe), and the render
   loop indexed the empty vector out of bounds. `ExportClicked` now refuses to open the dialog when
   `State.Frames` is empty; `Accept()` also guards directly.
-- **Ragdoll's ghost preview was missing the QImage fallback** Walk Cycle's preview has (added in the
-  same commit family specifically because the OpenGL ghost pass alone isn't reliable) - both dialogs'
-  preview lambdas now share one `ShowMinifigProjectionGhost` helper, which also killed ~90 lines of
-  duplicated save/mutate/render/restore code between them.
 - `SetAlphaScale`'s `mAlphaScaleDirty` flag was set but never read in `lcContext::FlushState` - wired
   into the dirty-check gate.
-- Duplicated "convert Frames into Keyframes" block (WalkCycleClicked/RagdollClicked, ~17 lines each)
-  factored into one `RebuildKeyframesFromFrames` helper.
+- Extracted a shared `ShowMinifigProjectionGhost` helper (OpenGL ghost pass + QImage fallback) and a
+  `RebuildKeyframesFromFrames` helper for Walk Cycle's dialog and generated-frames→keyframes mirror,
+  originally written to also serve the now-removed Ragdoll generator.
 
 ### smd_mcp: registration + core parsing bugs (see MCP section below for details)
 The MCP server was never actually usable end to end: not registered for Claude Code at all (only
 `.opencode.jsonc` existed), `create_project` crashed if the target directory didn't exist yet, and -
 the critical one - the LDraw group parser was looking for a syntax (`0 GROUP <n> <name>`) that
 StopMotionDigital's own C++ save code has never written (real format: `0 !LEOCAD GROUP BEGIN
-<name>`), so `read_project`/`generate_walk_cycle`/`generate_ragdoll` saw **zero groups** on every
-real app-saved project. Fixed; see "MCP Server" section for the full breakdown.
+<name>`), so `read_project`/`generate_walk_cycle` saw **zero groups** on every real app-saved
+project. Fixed; see "MCP Server" section for the full breakdown.
 
-### Ragdoll Death Animation Generator (v3 — joint-articulated rewrite)
-Procedural stop-motion death/ragdoll animation for Posable minifigs. Selected minifig + dialog →
-frames: knockback, obstacle hit, bounce, settle in sprawled pose. **Not** real-time physics —
-deliberate stop-motion look.
-
-**v1/v2 problem** (user: "why does a minifig combust on death anim", "should unsocket parts", "death
-animations are the same"): every limb GROUP (e.g. forearm + hand together) rotated as one rigid body
-around the body's center of mass via a raw single-axis quaternion spin, with full-intensity noise
-regardless of how hard the hit was. That reads as a rigid slab orbiting a point, not an articulated
-fall, and looked identical in kind for "Got shot" and "Explosion" alike.
-
-**v3 fix**:
-- Arms/legs now swing from their real shoulder/hip pivot via `MinifigWizard::SetAngle` (same math
-  Walk Cycle uses) — `RArmDelta = lcMul(Wizard->mMinifig.Matrices[LC_MFW_RARM], RArmNeutralInv)`,
-  applied to the piece's start pose *before* the whole-body tumble transform, so articulation and
-  tumble compose correctly instead of both fighting for the same pivot.
-- Head pivots on the wizard's neck position (`Matrices[LC_MFW_HEAD].GetTranslation()`), not body
-  center; still free-axis rotation (no single-DOF wizard angle suits a backward head flop).
-- **`Intensity` derived from Knockback** (`qBound(0.2, Knockback/10, 1.0)`), scales peak flail/splay/
-  headLag angles, noise amplitude, and per-piece scatter jitter. A "Got shot" death (small Knockback)
-  gets a controlled buckle-and-collapse; "Explosion" (large Knockback) keeps the full flail.
-- Per-piece jitter (`PerPieceScatterJitter`, one random vector per piece) added on top of the shared
-  per-group scatter direction, so multi-piece limbs visibly separate piece-from-piece at impact
-  instead of moving as one rigid block — the closest approximation to "unsocketing" without a real
-  joint graph.
-- Presets rebalanced: Punched=3 studs, **Got shot=0.5 studs** (mostly a vertical collapse, was 12),
-  Fell off cliff=1.5 studs (height-dominant), Explosion=20 studs (unchanged, full chaos is correct
-  here). Default Knockback lowered from 8 to 2 studs.
-
-**Implementation**: `RagdollClicked` in `lc_animatewidget.cpp`. `RunInHistorySequence` wrapper was
-removed - it was a no-op, see the review-fix-pass entry above.
+### Ragdoll Death Animation Generator — REMOVED
+Existed briefly this session (procedural knockback/fall/bounce animation for Posable minifigs,
+button in the Animate dock next to Walk Cycle). Went through a v1→v2 (randomization) → v3
+(joint-articulated rewrite, reusing `MinifigWizard::SetAngle` like Walk Cycle, plus a Knockback-
+derived `Intensity` scale) but the user asked for it to be removed outright rather than iterated on
+further. Removed entirely: `RagdollClicked` and its button/wiring from `lc_animatewidget.cpp/.h`,
+the MCP server's `generate_ragdoll` tool and `compute_ragdoll_frames` helper from
+`smd_mcp/server.py`, and all doc references. If revisited, the v3 approach (real joint pivots
+instead of rotating whole limb groups around body center, intensity scaled from hit strength) is the
+right starting point technically - just confirm the user actually wants it back first.
 
 ## IN PROGRESS / BROKEN
 
@@ -338,7 +314,7 @@ at it by name.
 
 The MCP server's `LDrawGroup.minifig_family` field holds that **family
 group's name string** (e.g. `"Minifig Torso #1"`) - this is also the
-`minifig_name` identifier `generate_walk_cycle`/`generate_ragdoll` take.
+`minifig_name` identifier `generate_walk_cycle` takes.
 `get_project_status`'s `"minifigs"` list surfaces the available identifiers
 for a project, since there's no human-readable name to guess.
 
@@ -379,7 +355,7 @@ uv run python -m smd_mcp.render_frames
 This reads `~/Desktop/fight.ldr` + `fight.animate.json`, renders each frame
 via LeoCAD CLI (`-i` + `--camera-position`), and stitches with ffmpeg.
 
-### All MCP tools (30)
+### All MCP tools (29)
 
 | Tool | What it does |
 |---|---|
@@ -410,7 +386,6 @@ via LeoCAD CLI (`-i` + `--camera-position`), and stitches with ffmpeg.
 | `explosion_effect` | Scatter + spin pieces outward |
 | `randomize_frame` | Add noise to positions/rotations |
 | `generate_walk_cycle` | Walk/jog/run for a named minifig |
-| `generate_ragdoll` | Death/fall animation for a named minifig |
 | `batch_transform_pieces` | Move/rotate groups of pieces at once |
 | `export_video` | Instructions for rendering to MP4 |
 
@@ -438,8 +413,8 @@ via LeoCAD CLI (`-i` + `--camera-position`), and stitches with ffmpeg.
 
 ## Relevant Files
 
-- `smd_mcp/smd_mcp/server.py`: MCP server with all 30 tools, wizard chain,
-  walk cycle, ragdoll, effects
+- `smd_mcp/smd_mcp/server.py`: MCP server with all 29 tools, wizard chain,
+  walk cycle, effects
 - `smd_mcp/smd_mcp/animate_fight.py`: Example — generates 120-frame fight
   scene for two minifigs
 - `smd_mcp/smd_mcp/render_frames.py`: Renders .animate.json → PNG frames →
@@ -448,7 +423,7 @@ via LeoCAD CLI (`-i` + `--camera-position`), and stitches with ffmpeg.
 - `.opencode.jsonc`: MCP server registration (`type: "local"`)
 - `common/minifig.cpp`: `Calculate()` — source of truth for piece transforms
 - `resources/minifig.ini`: Per-piece-type offset matrices
-- `common/lc_animatewidget.cpp`: WalkCycleClicked, RagdollClicked, BakeKeyframes, RefreshFilmstrip,
+- `common/lc_animatewidget.cpp`: WalkCycleClicked, BakeKeyframes, RefreshFilmstrip,
   projection ghost lambdas
 - `common/lc_animatewidget.h`: lcKeyframePoint (default easing now Linear), lcAnimateDocumentState,
   lcEasingType, ApplyEasing

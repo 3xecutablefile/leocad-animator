@@ -135,7 +135,6 @@ public slots:
 	void AttachToHandClicked();
 	void MirrorPoseClicked();
 	void WalkCycleClicked();
-	void RagdollClicked();
 	void ModeChanged(int Index);
 	void AddKeyframeClicked();
 	void DeleteKeyframeClicked();
@@ -154,10 +153,10 @@ protected:
 	void RefreshOnionSkin(lcModel* Model);
 	void BakeKeyframes(lcModel* Model, lcAnimateDocumentState& State);
 
-	// Shared by Walk Cycle / Ragdoll's live parameter-preview dialogs: shows GhostPositions/
-	// GhostRotations both via the OpenGL ghost pass (SetGhostFrame) and as a QImage overlay
-	// (ShowGhostImage) - the QImage path is a guaranteed-visibility fallback for configurations
-	// where the OpenGL ghost pass doesn't reliably composite.
+	// Used by Walk Cycle's live parameter-preview dialog: shows GhostPositions/GhostRotations both
+	// via the OpenGL ghost pass (SetGhostFrame) and as a QImage overlay (ShowGhostImage) - the QImage
+	// path is a guaranteed-visibility fallback for configurations where the OpenGL ghost pass doesn't
+	// reliably composite.
 	void ShowMinifigProjectionGhost(lcModel* Model, const QMap<lcPiece*, lcVector3>& GhostPositions, const QMap<lcPiece*, lcMatrix33>& GhostRotations);
 
 	QComboBox* mModeSelector;

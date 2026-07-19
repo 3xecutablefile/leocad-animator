@@ -51,7 +51,7 @@ Or run directly (useful for testing the server starts cleanly):
 uv --directory /path/to/smd_mcp run smd-mcp
 ```
 
-## Tools (30 total)
+## Tools (29 total)
 
 ### Project & Scene
 - **`read_project`** — Read `.ldr` + `.animate.json`, returns pieces, groups, frames
@@ -87,7 +87,6 @@ uv --directory /path/to/smd_mcp run smd-mcp
 
 ### Generation
 - **`generate_walk_cycle`** — 24-frame walk cycle for posable minifig
-- **`generate_ragdoll`** — Ragdoll death animation with randomized limbs
 - **`batch_transform_pieces`** — Translate/rotate multiple pieces at once
 
 ### Export
