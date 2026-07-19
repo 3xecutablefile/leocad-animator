@@ -86,30 +86,26 @@ void lcViewWidget::resizeGL(int Width, int Height)
 void lcViewWidget::paintGL()
 {
 	mView->OnDraw();
-}
-
-void lcViewWidget::paintEvent(QPaintEvent* Event)
-{
-	QOpenGLWidget::paintEvent(Event);
 
 	if (!mGhostImage.isNull())
 	{
 		QPainter p(this);
-		p.setOpacity(0.4);
+		p.setOpacity(0.4f);
 		p.drawImage(0, 0, mGhostImage.scaled(width(), height(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+		p.end();
 	}
 }
 
 void lcViewWidget::ShowGhostImage(const QImage& Image)
 {
 	mGhostImage = Image;
-	update();
+	repaint();
 }
 
 void lcViewWidget::ClearGhostImage()
 {
 	mGhostImage = QImage();
-	update();
+	repaint();
 }
 
 bool lcViewWidget::event(QEvent* Event)
