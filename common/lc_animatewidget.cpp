@@ -1141,10 +1141,38 @@ void lcAnimateWidget::WalkCycleClicked()
 		StrideSpin->setValue(stride);
 	};
 
+	auto UpdateWalkProjection = [&]()
+	{
+		lcView* ActiveView = gMainWindow->GetActiveView();
+		if (!ActiveView || !Model)
+			return;
+
+		const float DirRad = LC_DTOR * static_cast<float>(DirSpin->value());
+		const lcVector3 ForwardAxis(-sinf(DirRad), -cosf(DirRad), 0.0f);
+		const float Travel = 2.0f * LegLen * sinf(LC_DTOR * static_cast<float>(StrideSpin->value()));
+
+		QMap<lcPiece*, lcVector3> GhostPos;
+		QMap<lcPiece*, lcMatrix33> GhostRot;
+
+		for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+		{
+			lcGroup* G = Piece->GetGroup();
+
+			if (G && G->mMinifigFamily == Family)
+			{
+				GhostPos[Piece.get()] = Piece->GetPosition() + ForwardAxis * Travel;
+				GhostRot[Piece.get()] = Piece->GetRotation();
+			}
+		}
+
+		if (!GhostPos.isEmpty())
+			ActiveView->SetGhostFrame(GhostPos, GhostRot, 0.3f);
+	};
+
 	bool DistanceGuard = false;
-	QObject::connect(GaitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { UpdateFromGait(); });
-	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateDistFromStride(); DistanceGuard = false; } });
-	QObject::connect(DistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateStrideFromDist(); DistanceGuard = false; } });
+	QObject::connect(GaitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { UpdateFromGait(); UpdateWalkProjection(); });
+	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateDistFromStride(); DistanceGuard = false; } UpdateWalkProjection(); });
+	QObject::connect(DistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateStrideFromDist(); DistanceGuard = false; } UpdateWalkProjection(); });
 
 	QDialogButtonBox* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
 	Form->addRow(Buttons);
@@ -1153,8 +1181,15 @@ void lcAnimateWidget::WalkCycleClicked()
 
 	UpdateFromGait();
 	UpdateDistFromStride();
+	UpdateWalkProjection();
 	if (!Dialog.exec())
+	{
+		if (lcView* V = gMainWindow->GetActiveView())
+			V->ClearGhost();
 		return;
+	}
+	if (lcView* V = gMainWindow->GetActiveView())
+		V->ClearGhost();
 
 	const int Steps = 24;
 	const double StrideAngle = StrideSpin->value();
@@ -1518,6 +1553,33 @@ void lcAnimateWidget::RagdollClicked()
 	FramesSpin->setValue(24);
 	Form->addRow(tr("Frames:"), FramesSpin);
 
+	auto UpdateRagdollProjection = [&]()
+	{
+		lcView* ActiveView = gMainWindow->GetActiveView();
+		if (!ActiveView || !Model)
+			return;
+
+		const float RDirRad = LC_DTOR * static_cast<float>(DirSpin->value());
+		const lcVector3 RAxis(-sinf(RDirRad), -cosf(RDirRad), 0.0f);
+		const float RKnockback = static_cast<float>(KnockbackSpin->value() * 20.0f);
+
+		QMap<lcPiece*, lcVector3> GhostPos;
+		QMap<lcPiece*, lcMatrix33> GhostRot;
+
+		for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+		{
+			lcGroup* G = Piece->GetGroup();
+			if (G && G->mMinifigFamily == Family)
+			{
+				GhostPos[Piece.get()] = Piece->GetPosition() + RAxis * RKnockback;
+				GhostRot[Piece.get()] = Piece->GetRotation();
+			}
+		}
+
+		if (!GhostPos.isEmpty())
+			ActiveView->SetGhostFrame(GhostPos, GhostRot, 0.3f);
+	};
+
 	auto ApplyPreset = [&]()
 	{
 		switch (PresetCombo->currentIndex())
@@ -1527,6 +1589,7 @@ void lcAnimateWidget::RagdollClicked()
 		case 2: DirSpin->setValue(180.0); KnockbackSpin->setValue(3.0);  HeightSpin->setValue(20.0); FramesSpin->setValue(36); break;
 		case 3: DirSpin->setValue(180.0); KnockbackSpin->setValue(20.0); HeightSpin->setValue(10.0); FramesSpin->setValue(30); break;
 		}
+		UpdateRagdollProjection();
 	};
 	QObject::connect(PresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { ApplyPreset(); });
 
@@ -1535,14 +1598,36 @@ void lcAnimateWidget::RagdollClicked()
 	QObject::connect(Buttons, &QDialogButtonBox::accepted, &Dialog, &QDialog::accept);
 	QObject::connect(Buttons, &QDialogButtonBox::rejected, &Dialog, &QDialog::reject);
 
+	QObject::connect(DirSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { UpdateRagdollProjection(); });
+	QObject::connect(KnockbackSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { UpdateRagdollProjection(); });
+
+	UpdateRagdollProjection();
 	if (!Dialog.exec())
+	{
+		if (lcView* V = gMainWindow->GetActiveView())
+			V->ClearGhost();
 		return;
+	}
+	if (lcView* V = gMainWindow->GetActiveView())
+		V->ClearGhost();
 
 	const int TotalFrames = FramesSpin->value();
 	const float DirRad = LC_DTOR * static_cast<float>(DirSpin->value());
-	const float KnockbackLDU = static_cast<float>(KnockbackSpin->value() * 20.0f);
+	const float BaseKnockbackLDU = static_cast<float>(KnockbackSpin->value() * 20.0f);
 	const float HeightLDU = static_cast<float>(HeightSpin->value() * 20.0f);
 	const lcVector3 ForwardAxis(-sinf(DirRad), -cosf(DirRad), 0.0f);
+
+	// per-run randomness so no two death anims are identical
+	qsizetype Seed = static_cast<qsizetype>(QTime::currentTime().msecsSinceStartOfDay()) ^ reinterpret_cast<qsizetype>(Model);
+	QRandomGenerator Rng(Seed);
+	auto RF = [&](float lo, float hi) { return static_cast<float>(lo + Rng.generateDouble() * (hi - lo)); };
+
+	const float DirJitter = RF(-10.0f, 10.0f);
+	const lcVector3 JitterAxis(-sinf(DirRad + LC_DTOR * DirJitter), -cosf(DirRad + LC_DTOR * DirJitter), 0.0f);
+	const float KnockbackScale = RF(0.75f, 1.25f);
+	const float KnockbackLDU = BaseKnockbackLDU * KnockbackScale;
+	const float HeightScale = RF(0.7f, 1.3f);
+	const float ActualHeight = HeightLDU * HeightScale;
 
 	struct lcStartPose { lcVector3 Position; lcMatrix33 Rotation; };
 	QMap<lcPiece*, lcStartPose> StartPoses;
@@ -1562,6 +1647,14 @@ void lcAnimateWidget::RagdollClicked()
 		BodyCenter += StartPoses[Piece].Position;
 	BodyCenter /= static_cast<float>(TorsoPieces.size());
 
+	// per-group scatter offsets triggered at impact (unsocketing)
+	const lcVector3 RightArmScatter = lcVector3(1.0f, -0.3f, 0.3f) * RF(0.3f, 0.7f);
+	const lcVector3 LeftArmScatter  = lcVector3(-1.0f, -0.3f, 0.3f) * RF(0.3f, 0.7f);
+	const lcVector3 RightLegScatter = lcVector3(0.4f, 0.5f, -0.2f) * RF(0.2f, 0.5f);
+	const lcVector3 LeftLegScatter  = lcVector3(-0.4f, 0.5f, -0.2f) * RF(0.2f, 0.5f);
+	const lcVector3 HeadScatter     = lcVector3(RF(-0.2f, 0.2f), -0.5f, 0.5f) * RF(0.5f, 1.0f);
+	const float ImpactFrame = static_cast<float>(0.55 + Rng.generateDouble() * 0.1); // impact timing varies
+
 	const lcAnimateFrame NeutralFrame = SnapshotFrame(Model);
 	std::vector<lcAnimateFrame> NewFrames;
 	NewFrames.reserve(TotalFrames);
@@ -1572,48 +1665,72 @@ void lcAnimateWidget::RagdollClicked()
 		const float t = static_cast<float>(Frame) / static_cast<float>(TotalFrames - 1);
 
 		// === Body position ===
-		// Phases: impact (0-10%), knockback (10-40%), fall (40-60%), hit (60-70%), settle (70-100%)
 		float horizT, vertT;
 		if (t < 0.10f)                        { horizT = 0.0f;                         vertT = 0.0f; }
 		else if (t < 0.40f)                   { horizT = (t - 0.10f) / 0.30f;          vertT = horizT * 0.5f; }
-		else if (t < 0.60f)                   { horizT = 1.0f;                         vertT = 0.5f + (t - 0.40f) / 0.20f; }
-		else if (t < 0.70f)                   { horizT = 1.0f;                         vertT = 1.5f - (t - 0.60f) / 0.10f * 0.5f; }
-		else                                  { horizT = 1.0f;                         vertT = 1.0f - (t - 0.70f) / 0.30f * 0.3f; }
+		else if (t < ImpactFrame)             { horizT = 1.0f;                         vertT = 0.5f + (t - 0.40f) / (ImpactFrame - 0.40f) * 0.5f; }
+		else if (t < ImpactFrame + 0.05f)     { horizT = 1.0f;                         vertT = 1.0f - (t - ImpactFrame) / 0.05f * 0.3f; }
+		else                                  { horizT = 1.0f;                         vertT = 0.7f - (t - ImpactFrame - 0.05f) / (1.0f - ImpactFrame - 0.05f) * 0.7f; }
 
 		const float forwardProgress = (t < 0.40f) ? 1.0f - powf(1.0f - horizT, 3.0f) : horizT;
-		const float heightLift = HeightLDU * sinf(vertT * LC_PI * 0.6f);
-		const float heightDrop = (t > 0.60f) ? (t - 0.60f) / 0.40f * HeightLDU * 0.6f : 0.0f;
+		const float heightLift = ActualHeight * sinf(vertT * LC_PI * 0.6f);
 
-		lcVector3 BodyPos = ForwardAxis * KnockbackLDU * forwardProgress;
-		BodyPos.z += heightLift - heightDrop;
+		// ground clamp: heightDrop floors at zero once the body reaches ground
+		float heightDrop = 0.0f;
+		if (t > ImpactFrame)
+			heightDrop = (t - ImpactFrame) / (1.0f - ImpactFrame) * ActualHeight * 0.8f;
+		const float GroundZ = std::max(0.0f, heightLift - heightDrop);
+
+		lcVector3 BodyPos = JitterAxis * KnockbackLDU * forwardProgress;
+		BodyPos.z += GroundZ;
+
+		// bounce impulse on hit
+		if (t > ImpactFrame && t < ImpactFrame + 0.08f)
+		{
+			const float bounceT = (t - ImpactFrame) / 0.08f;
+			BodyPos.z += ActualHeight * 0.15f * sinf(bounceT * LC_PI);
+		}
 
 		// === Body rotation (tumble) ===
 		const lcVector3 TumbleAxis(-ForwardAxis.y, ForwardAxis.x, 0.0f);
 		float TumbleAngle;
-		if (t < 0.10f)      TumbleAngle = 0.0f;
-		else if (t < 0.50f) TumbleAngle = (t - 0.10f) / 0.40f * 110.0f;
-		else if (t < 0.60f) TumbleAngle = 110.0f + (t - 0.50f) / 0.10f * 30.0f;
-		else if (t < 0.70f) TumbleAngle = 140.0f - (t - 0.60f) / 0.10f * 40.0f;
-		else                TumbleAngle = 100.0f - (t - 0.70f) / 0.30f * 10.0f;
+		if (t < 0.10f)      TumbleAngle = RF(-5.0f, 5.0f);
+		else if (t < 0.50f) TumbleAngle = (t - 0.10f) / 0.40f * 110.0f + RF(-10.0f, 10.0f);
+		else if (t < ImpactFrame) TumbleAngle = 110.0f + (t - 0.50f) / (ImpactFrame - 0.50f) * 30.0f + RF(-10.0f, 10.0f);
+		else if (t < ImpactFrame + 0.05f) TumbleAngle = 140.0f - (t - ImpactFrame) / 0.05f * 40.0f;
+		else                TumbleAngle = 100.0f - (t - ImpactFrame - 0.05f) / (1.0f - ImpactFrame - 0.05f) * 10.0f;
 
 		const lcMatrix33 BodyRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(TumbleAxis.x, TumbleAxis.y, TumbleAxis.z, LC_DTOR * TumbleAngle)));
 
+		// === Per-group scatter offset (unsocketing) ===
+		// Before impact, limbs follow body. At impact, they separate and fly on their own trajectory.
+		float ScatterT = 0.0f;
+		if (t > ImpactFrame)
+			ScatterT = (t - ImpactFrame) / (1.0f - ImpactFrame);
+
+		const float ScatterScale = ScatterT * ScatterT; // quadratic so limbs fling out fast then coast
+		const lcVector3 RArmOffset = RightArmScatter * KnockbackLDU * ScatterScale;
+		const lcVector3 LArmOffset  = LeftArmScatter * KnockbackLDU * ScatterScale;
+		const lcVector3 RLegOffset  = RightLegScatter * KnockbackLDU * ScatterScale;
+		const lcVector3 LLegOffset  = LeftLegScatter * KnockbackLDU * ScatterScale;
+		const lcVector3 HeadOffset  = HeadScatter * KnockbackLDU * ScatterScale;
+
 		// === Limb rotations ===
+		// each limb gets per-run random noise so flailing looks different every time
 		const float armFlail = (t < 0.10f) ? 0.0f :
-			(t < 0.50f) ? (t - 0.10f) / 0.40f * 150.0f + sinf(t * LC_2PI * 2.0f) * 20.0f :
-			(t < 0.65f) ? 170.0f + sinf(t * LC_2PI * 3.0f) * 10.0f :
-			130.0f + (1.0f - (t - 0.65f) / 0.35f) * 20.0f;
+			(t < 0.50f) ? (t - 0.10f) / 0.40f * RF(140.0f, 170.0f) + sinf(t * LC_2PI * RF(1.5f, 3.0f) + RF(0.0f, LC_2PI)) * RF(10.0f, 30.0f) :
+			(t < ImpactFrame + 0.05f) ? RF(160.0f, 190.0f) + sinf(t * LC_2PI * RF(2.0f, 4.0f) + RF(0.0f, LC_2PI)) * 15.0f :
+			RF(130.0f, 170.0f) - ScatterT * RF(20.0f, 50.0f) + sinf(t * LC_2PI * RF(1.5f, 3.0f) + RF(0.0f, LC_2PI)) * 10.0f;
 
 		const float legSplay = (t < 0.10f) ? 0.0f :
-			(t < 0.40f) ? (t - 0.10f) / 0.30f * 60.0f :
-			(t < 0.60f) ? 60.0f + (t - 0.40f) / 0.20f * 20.0f :
-			(t < 0.70f) ? 80.0f + (t - 0.60f) / 0.10f * 10.0f :
-			90.0f;
+			(t < 0.40f) ? (t - 0.10f) / 0.30f * RF(40.0f, 70.0f) :
+			(t < ImpactFrame) ? RF(50.0f, 80.0f) + (t - 0.40f) / (ImpactFrame - 0.40f) * RF(10.0f, 30.0f) + sinf(t * LC_2PI * RF(1.0f, 2.5f) + RF(0.0f, LC_2PI)) * 10.0f :
+			RF(60.0f, 90.0f) + ScatterT * RF(20.0f, 40.0f);
 
 		const float headLag = (t < 0.10f) ? 0.0f :
-			(t < 0.50f) ? (t - 0.10f) / 0.40f * 80.0f :
-			(t < 0.65f) ? 80.0f + (t - 0.50f) / 0.15f * 30.0f :
-			110.0f - (t - 0.65f) / 0.35f * 20.0f;
+			(t < 0.50f) ? (t - 0.10f) / 0.40f * RF(60.0f, 90.0f) + sinf(t * LC_2PI * 4.0f + RF(0.0f, LC_2PI)) * 10.0f :
+			(t < ImpactFrame + 0.05f) ? RF(70.0f, 100.0f) + (t - 0.50f) / (ImpactFrame + 0.05f - 0.50f) * RF(20.0f, 40.0f) :
+			RF(80.0f, 110.0f) - ScatterT * RF(10.0f, 30.0f);
 
 		const lcMatrix33 RArmRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * -armFlail)));
 		const lcMatrix33 LArmRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * armFlail)));
@@ -1622,12 +1739,12 @@ void lcAnimateWidget::RagdollClicked()
 		const lcMatrix33 HeadRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(TumbleAxis.x, TumbleAxis.y, TumbleAxis.z, LC_DTOR * -headLag)));
 		const lcMatrix33 Identity = lcMatrix33Identity();
 
-		auto ApplyToPieces = [&](const std::vector<lcPiece*>& Pieces, const lcMatrix33& ExtraRot)
+		auto ApplyToPieces = [&](const std::vector<lcPiece*>& Pieces, const lcMatrix33& ExtraRot, const lcVector3& Offset)
 		{
 			for (lcPiece* Piece : Pieces)
 			{
 				const lcStartPose& Start = StartPoses[Piece];
-				const lcVector3 NewPos = BodyPos + lcMul(Start.Position - BodyCenter, BodyRot) + BodyCenter;
+				const lcVector3 NewPos = BodyPos + Offset + lcMul(Start.Position - BodyCenter, BodyRot) + BodyCenter;
 				const lcMatrix33 NewRot = lcMul(lcMul(Start.Rotation, BodyRot), ExtraRot);
 
 				Piece->SetPosition(NewPos, 1, false);
@@ -1636,13 +1753,13 @@ void lcAnimateWidget::RagdollClicked()
 			}
 		};
 
-		ApplyToPieces(TorsoPieces, Identity);
-		ApplyToPieces(OtherPieces, Identity);
-		ApplyToPieces(HeadPieces, HeadRot);
-		ApplyToPieces(RightArmPieces, RArmRot);
-		ApplyToPieces(LeftArmPieces, LArmRot);
-		ApplyToPieces(RightLegPieces, RLegRot);
-		ApplyToPieces(LeftLegPieces, LLegRot);
+		ApplyToPieces(TorsoPieces, Identity, lcVector3(0.0f, 0.0f, 0.0f));
+		ApplyToPieces(OtherPieces, Identity, lcVector3(0.0f, 0.0f, 0.0f));
+		ApplyToPieces(HeadPieces, HeadRot, HeadOffset);
+		ApplyToPieces(RightArmPieces, RArmRot, RArmOffset);
+		ApplyToPieces(LeftArmPieces, LArmRot, LArmOffset);
+		ApplyToPieces(RightLegPieces, RLegRot, RLegOffset);
+		ApplyToPieces(LeftLegPieces, LLegRot, LLegOffset);
 
 		NewFrames.push_back(SnapshotFrame(Model));
 	}

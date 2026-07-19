@@ -879,18 +879,21 @@ void lcView::OnDraw()
 	{
 		QMap<lcPiece*, lcVector3> SavedPositions;
 		QMap<lcPiece*, lcMatrix33> SavedRotations;
+		QMap<lcPiece*, bool> SavedHidden;
 
 		for (const std::unique_ptr<lcPiece>& Piece : mModel->GetPieces())
 		{
 			lcPiece* Ptr = Piece.get();
 			SavedPositions[Ptr] = Ptr->GetPosition();
 			SavedRotations[Ptr] = Ptr->GetRotation();
+			SavedHidden[Ptr] = Piece->IsHidden();
 		}
 
 		for (auto It = mGhostPositions.constBegin(); It != mGhostPositions.constEnd(); ++It)
 		{
 			It.key()->SetPosition(It.value(), 1, false);
 			It.key()->SetRotation(mGhostRotations.value(It.key()), 1, false);
+			It.key()->SetHidden(false);
 		}
 
 		for (const std::unique_ptr<lcPiece>& Piece : mModel->GetPieces())
@@ -922,6 +925,7 @@ void lcView::OnDraw()
 		{
 			It.key()->SetPosition(It.value(), 1, false);
 			It.key()->SetRotation(SavedRotations.value(It.key()), 1, false);
+			It.key()->SetHidden(SavedHidden.value(It.key()));
 		}
 
 		for (const std::unique_ptr<lcPiece>& Piece : mModel->GetPieces())

@@ -80,7 +80,7 @@ struct lcKeyframePoint
 {
 	int Time;
 	lcKeyframePose Pose;
-	lcEasingType SegmentEasing = lcEasingType::EaseInOut;
+	lcEasingType SegmentEasing = lcEasingType::Linear;
 };
 
 // lcGetActiveModel() is not a stable "the current document" pointer - it switches to point at a
