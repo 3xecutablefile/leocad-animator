@@ -1173,6 +1173,8 @@ void lcAnimateWidget::WalkCycleClicked()
 	QObject::connect(GaitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { UpdateFromGait(); UpdateWalkProjection(); });
 	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateDistFromStride(); DistanceGuard = false; } UpdateWalkProjection(); });
 	QObject::connect(DistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateStrideFromDist(); DistanceGuard = false; } UpdateWalkProjection(); });
+	QObject::connect(DirSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { UpdateWalkProjection(); });
+	QObject::connect(ArmSwingSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { UpdateWalkProjection(); });
 
 	QDialogButtonBox* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
 	Form->addRow(Buttons);
@@ -1182,6 +1184,7 @@ void lcAnimateWidget::WalkCycleClicked()
 	UpdateFromGait();
 	UpdateDistFromStride();
 	UpdateWalkProjection();
+	Dialog.move(gMainWindow->mapToGlobal(QPoint(gMainWindow->width() + 10, 100)));
 	if (!Dialog.exec())
 	{
 		if (lcView* V = gMainWindow->GetActiveView())
