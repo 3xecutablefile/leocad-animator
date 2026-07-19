@@ -1203,14 +1203,15 @@ void lcAnimateWidget::WalkCycleClicked()
 			TempView.GetCamera()->SetProjection(Cam->GetProjection());
 		}
 
+		QImage RenderedGhost;
 		std::vector<QImage> Images = TempView.GetStepImages(1, 1);
 		if (!Images.empty())
 		{
-			QImage Scaled = Images.front().scaled(PW, PH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+			RenderedGhost = Images.front().scaled(PW, PH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 
 			lcViewWidget* W = ActiveView->GetWidget();
 			if (W)
-				W->ShowGhostImage(Scaled);
+				W->ShowGhostImage(RenderedGhost);
 		}
 
 		for (auto It = SavedPos.constBegin(); It != SavedPos.constEnd(); ++It)
@@ -1220,6 +1221,17 @@ void lcAnimateWidget::WalkCycleClicked()
 			It.key()->SetHidden(SavedHidden.value(It.key()));
 		}
 		Model->SetCurrentStep(1);
+
+		// Restore+SetCurrentStep may have triggered Update()->RefreshOnionSkin() which clears ghosts.
+		// Re-apply immediately so the ghost stays visible during dialog interaction.
+		if (!GhostPos.isEmpty())
+			ActiveView->SetGhostFrame(GhostPos, GhostRot, 0.3f);
+		if (!RenderedGhost.isNull())
+		{
+			lcViewWidget* W = ActiveView->GetWidget();
+			if (W)
+				W->ShowGhostImage(RenderedGhost);
+		}
 	};
 
 	bool DistanceGuard = false;
