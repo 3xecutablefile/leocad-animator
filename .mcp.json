@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "smd": {
+      "command": "/Users/NotSmartMan/.local/bin/uv",
+      "args": ["--directory", "/Users/NotSmartMan/leocad/smd_mcp", "run", "smd-mcp"]
+    }
+  }
+}

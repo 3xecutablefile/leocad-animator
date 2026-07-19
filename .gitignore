@@ -38,3 +38,6 @@ uic_wrapper.bat
 appdir
 LeoCAD-Windows*.exe
 *.snap
+smd_mcp/.venv
+smd_mcp/smd_mcp.egg-info
+smd_mcp/**/__pycache__

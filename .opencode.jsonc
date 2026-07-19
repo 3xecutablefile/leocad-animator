@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "smd": {
+      "type": "local",
+      "command": ["uv", "--directory", "/Users/NotSmartMan/leocad/smd_mcp", "run", "smd-mcp"],
+      "enabled": true,
+      "environment": {}
+    }
+  }
+}
