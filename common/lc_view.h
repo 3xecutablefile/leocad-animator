@@ -206,6 +206,7 @@ public:
 		mGhostRotations = Rotations;
 		mGhostAlpha = Alpha;
 		mDrawGhost = true;
+		Redraw();
 	}
 
 	void ClearGhost()
@@ -213,6 +214,7 @@ public:
 		mDrawGhost = false;
 		mGhostPositions.clear();
 		mGhostRotations.clear();
+		Redraw();
 	}
 
 	bool IsGhostEnabled() const { return mDrawGhost; }

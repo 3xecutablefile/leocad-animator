@@ -142,9 +142,36 @@ Key established facts (do not re-derive):
 
 ## IN PROGRESS
 
-### Walk cycle projection ghost
-Semi-transparent ghost showing where the minifig will be during the walk cycle animation.
-- Adjustable distance control (how far ahead the projection extends).
+### Ragdoll Death Animation Generator
+Procedural stop-motion death/ragdoll animation for Posable minifigs. Selected minifig + dialog → frames: knockback, obstacle hit, bounce, settle in sprawled pose. **Not** real-time physics — deliberate stop-motion look.
+
+**Stop-motion aesthetic** (NOT realistic physics):
+- Pose holds: key poses held 2-3 frames (stop-motion animator style)
+- Exaggerated poses: over-rotated limbs, overshoot positions
+- Snap frames: occasional sudden position change between frames
+- No smooth interpolation — each frame a deliberate pose
+- Imperfect arcs: slightly jerky trajectories
+
+**Segment breakdown** (24-frame default):
+- Frames 0-3: Impact — body jerks back, limbs start to react
+- Frames 3-8: Knockback — body flies in direction, limbs trail with delay
+- Frames 8-12: Free fall — body arcs, limbs flail with phase-offset sine noise
+- Frames 12-15: Hit obstacle/ground — sudden stop, limbs overshoot (inertia)
+- Frames 15-17: Bounce — body compresses, rebounds slightly
+- Frames 17-20: Second fall — settle toward rest
+- Frames 20-24: Rest — minimal movement, limbs sprawled
+
+**Per-group behavior**:
+- **Torso** (root): piecewise trajectory segments + tumble rotation via quaternion. At rest: tilted ~45° back.
+- **Head**: delayed follower (2-3 frame lag), whiplash snap on impact, at rest lolls to side.
+- **Arms**: flail abduct ~120° on knockback, random sine wobble during fall, fling forward on impact, sprawl at rest.
+- **Legs**: one buckles on knockback, scissors during fall, one straight + one folded at rest.
+
+**Parameters**: Direction (0-359°), Knockback (1-20 studs), Fall height/slope, Frames (12-48, default 24). Presets: "Got shot" / "Fell off cliff" / "Punched" / "Explosion".
+
+**No wizard reuse**: unlike Walk Cycle (which needs per-joint precision), ragdoll limbs get direct rotation values from noise/delay functions. `MinifigWizard` not consulted.
+
+**Implementation**: new `RagdollClicked` in `lc_animatewidget.cpp`, reuses group detection, `RunInHistorySequence`, `SnapshotFrame`, local-vector→move pattern. Button in animate dock next to Walk Cycle.
 
 ## BACKLOG
 
@@ -159,6 +186,7 @@ Semi-transparent ghost showing where the minifig will be during the walk cycle a
   LDraw library warning labels.
 - **Auto-keyframe at time 0** / at end of frame range (user currently must add keyframes
   explicitly).
+- **Walk cycle projection ghost**: semi-transparent ghost showing minifig position during walk cycle (adjustable distance).
 
 ## COMPLETED: Viewport ghost system (onion skin + walk cycle projection)
 

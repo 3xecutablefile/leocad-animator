@@ -214,6 +214,10 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	WalkCycleButton->setToolTip(tr("Select a Posable minifig and auto-generate an alternating-leg walk cycle across several frames"));
 	ActionLayout->addWidget(WalkCycleButton);
 
+	QPushButton* RagdollButton = new QPushButton(tr("Ragdoll Death..."), this);
+	RagdollButton->setToolTip(tr("Select a Posable minifig and generate a ragdoll death animation: knockback, fall, bounce, settle"));
+	ActionLayout->addWidget(RagdollButton);
+
 	ActionLayout->addStretch();
 	mExportButton = new QPushButton(tr("Export Animation..."), this);
 	ActionLayout->addWidget(mExportButton);
@@ -289,6 +293,7 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(AttachToHandButton, &QPushButton::clicked, this, &lcAnimateWidget::AttachToHandClicked);
 	connect(MirrorPoseButton, &QPushButton::clicked, this, &lcAnimateWidget::MirrorPoseClicked);
 	connect(WalkCycleButton, &QPushButton::clicked, this, &lcAnimateWidget::WalkCycleClicked);
+	connect(RagdollButton, &QPushButton::clicked, this, &lcAnimateWidget::RagdollClicked);
 	connect(mPlayButton, &QPushButton::clicked, this, &lcAnimateWidget::PlayPauseClicked);
 	connect(mOnionSkinCheck, &QCheckBox::toggled, this, &lcAnimateWidget::OnionSkinToggled);
 	connect(mExportButton, &QPushButton::clicked, this, &lcAnimateWidget::ExportClicked);
@@ -1398,6 +1403,280 @@ void lcAnimateWidget::WalkCycleClicked()
 
 	// Prevent auto-keyframe from detecting the just-applied walk cycle pose as "changed"
 	// and calling BakeKeyframes (which would regen from keyframes and lose the motion).
+	mLastAutoKeyframeDigest = SnapshotFrame(Model);
+
+	mTimelineWidget->SetKeyframes(&GetState(Model).Keyframes);
+	mTimelineWidget->SetFrameRange(0, std::max((int)GetState(Model).Frames.size(), 10));
+	mTimelineWidget->SetCurrentTime(GetState(Model).CurrentFrameIndex);
+	Update();
+}
+
+void lcAnimateWidget::RagdollClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	int Flags = 0;
+	std::vector<lcObject*> Selection;
+	lcObject* Focus = nullptr;
+	Model->GetSelectionInformation(&Flags, Selection, &Focus);
+
+	lcGroup* Family = nullptr;
+
+	for (lcObject* Object : Selection)
+	{
+		if (Object->IsPiece())
+		{
+			lcGroup* Group = ((lcPiece*)Object)->GetGroup();
+			if (Group && Group->mMinifigFamily)
+			{
+				Family = Group->mMinifigFamily;
+				break;
+			}
+		}
+	}
+
+	if (!Family)
+	{
+		QMessageBox::information(this, tr("Ragdoll Death"), tr("Select (or Alt+click) any part of a Posable minifig first."));
+		return;
+	}
+
+	lcGroup* TorsoGroup = nullptr;
+	lcGroup* HeadGroup = nullptr;
+	lcGroup* RightLegGroup = nullptr;
+	lcGroup* LeftLegGroup = nullptr;
+	lcGroup* RightArmGroup = nullptr;
+	lcGroup* LeftArmGroup = nullptr;
+
+	for (const std::unique_ptr<lcGroup>& Candidate : Model->GetGroups())
+	{
+		if (Candidate->mMinifigFamily != Family)
+			continue;
+
+		if (Candidate->mName.contains(QLatin1String("Torso")))      TorsoGroup = Candidate.get();
+		else if (Candidate->mName.contains(QLatin1String("Head")))  HeadGroup = Candidate.get();
+		else if (Candidate->mName.contains(QLatin1String("Right Leg"))) RightLegGroup = Candidate.get();
+		else if (Candidate->mName.contains(QLatin1String("Left Leg")))  LeftLegGroup = Candidate.get();
+		else if (Candidate->mName.contains(QLatin1String("Right Arm"))) RightArmGroup = Candidate.get();
+		else if (Candidate->mName.contains(QLatin1String("Left Arm")))  LeftArmGroup = Candidate.get();
+	}
+
+	std::vector<lcPiece*> TorsoPieces, HeadPieces, RightLegPieces, LeftLegPieces, RightArmPieces, LeftArmPieces, OtherPieces;
+
+	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+	{
+		lcGroup* Group = Piece->GetGroup();
+		if (!Group || Group->mMinifigFamily != Family)
+			continue;
+
+		if (Group == TorsoGroup) TorsoPieces.push_back(Piece.get());
+		else if (Group == HeadGroup) HeadPieces.push_back(Piece.get());
+		else if (Group == RightLegGroup) RightLegPieces.push_back(Piece.get());
+		else if (Group == LeftLegGroup) LeftLegPieces.push_back(Piece.get());
+		else if (Group == RightArmGroup) RightArmPieces.push_back(Piece.get());
+		else if (Group == LeftArmGroup) LeftArmPieces.push_back(Piece.get());
+		else OtherPieces.push_back(Piece.get());
+	}
+
+	if (TorsoPieces.empty())
+	{
+		QMessageBox::information(this, tr("Ragdoll Death"), tr("This minifig doesn't have a Torso group."));
+		return;
+	}
+
+	QDialog Dialog(this);
+	Dialog.setWindowTitle(tr("Ragdoll Death"));
+	QFormLayout* Form = new QFormLayout(&Dialog);
+
+	QComboBox* PresetCombo = new QComboBox(&Dialog);
+	PresetCombo->addItems({ tr("Punched"), tr("Got shot"), tr("Fell off cliff"), tr("Explosion") });
+	Form->addRow(tr("Preset:"), PresetCombo);
+
+	QDoubleSpinBox* DirSpin = new QDoubleSpinBox(&Dialog);
+	DirSpin->setRange(0.0, 359.0);
+	DirSpin->setValue(180.0);
+	DirSpin->setSuffix(tr(" deg"));
+	DirSpin->setToolTip(tr("Direction the minifig gets knocked back"));
+	Form->addRow(tr("Direction:"), DirSpin);
+
+	QDoubleSpinBox* KnockbackSpin = new QDoubleSpinBox(&Dialog);
+	KnockbackSpin->setRange(1.0, 50.0);
+	KnockbackSpin->setValue(8.0);
+	KnockbackSpin->setSuffix(tr(" studs"));
+	Form->addRow(tr("Knockback:"), KnockbackSpin);
+
+	QDoubleSpinBox* HeightSpin = new QDoubleSpinBox(&Dialog);
+	HeightSpin->setRange(0.0, 30.0);
+	HeightSpin->setValue(5.0);
+	HeightSpin->setSuffix(tr(" studs"));
+	Form->addRow(tr("Fall height:"), HeightSpin);
+
+	QSpinBox* FramesSpin = new QSpinBox(&Dialog);
+	FramesSpin->setRange(12, 48);
+	FramesSpin->setValue(24);
+	Form->addRow(tr("Frames:"), FramesSpin);
+
+	auto ApplyPreset = [&]()
+	{
+		switch (PresetCombo->currentIndex())
+		{
+		case 0: DirSpin->setValue(180.0); KnockbackSpin->setValue(4.0);  HeightSpin->setValue(2.0);  FramesSpin->setValue(16); break;
+		case 1: DirSpin->setValue(180.0); KnockbackSpin->setValue(12.0); HeightSpin->setValue(4.0);  FramesSpin->setValue(20); break;
+		case 2: DirSpin->setValue(180.0); KnockbackSpin->setValue(3.0);  HeightSpin->setValue(20.0); FramesSpin->setValue(36); break;
+		case 3: DirSpin->setValue(180.0); KnockbackSpin->setValue(20.0); HeightSpin->setValue(10.0); FramesSpin->setValue(30); break;
+		}
+	};
+	QObject::connect(PresetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { ApplyPreset(); });
+
+	QDialogButtonBox* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
+	Form->addRow(Buttons);
+	QObject::connect(Buttons, &QDialogButtonBox::accepted, &Dialog, &QDialog::accept);
+	QObject::connect(Buttons, &QDialogButtonBox::rejected, &Dialog, &QDialog::reject);
+
+	if (!Dialog.exec())
+		return;
+
+	const int TotalFrames = FramesSpin->value();
+	const float DirRad = LC_DTOR * static_cast<float>(DirSpin->value());
+	const float KnockbackLDU = static_cast<float>(KnockbackSpin->value() * 20.0f);
+	const float HeightLDU = static_cast<float>(HeightSpin->value() * 20.0f);
+	const lcVector3 ForwardAxis(-sinf(DirRad), -cosf(DirRad), 0.0f);
+
+	struct lcStartPose { lcVector3 Position; lcMatrix33 Rotation; };
+	QMap<lcPiece*, lcStartPose> StartPoses;
+
+	auto SavePoses = [&](const std::vector<lcPiece*>& Pieces)
+	{
+		for (lcPiece* Piece : Pieces)
+			StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
+	};
+	SavePoses(TorsoPieces);  SavePoses(HeadPieces);
+	SavePoses(RightLegPieces);  SavePoses(LeftLegPieces);
+	SavePoses(RightArmPieces);  SavePoses(LeftArmPieces);
+	SavePoses(OtherPieces);
+
+	lcVector3 BodyCenter(0.0f, 0.0f, 0.0f);
+	for (lcPiece* Piece : TorsoPieces)
+		BodyCenter += StartPoses[Piece].Position;
+	BodyCenter /= static_cast<float>(TorsoPieces.size());
+
+	const lcAnimateFrame NeutralFrame = SnapshotFrame(Model);
+	std::vector<lcAnimateFrame> NewFrames;
+	NewFrames.reserve(TotalFrames);
+	NewFrames.push_back(NeutralFrame);
+
+	for (int Frame = 0; Frame < TotalFrames; Frame++)
+	{
+		const float t = static_cast<float>(Frame) / static_cast<float>(TotalFrames - 1);
+
+		// === Body position ===
+		// Phases: impact (0-10%), knockback (10-40%), fall (40-60%), hit (60-70%), settle (70-100%)
+		float horizT, vertT;
+		if (t < 0.10f)                        { horizT = 0.0f;                         vertT = 0.0f; }
+		else if (t < 0.40f)                   { horizT = (t - 0.10f) / 0.30f;          vertT = horizT * 0.5f; }
+		else if (t < 0.60f)                   { horizT = 1.0f;                         vertT = 0.5f + (t - 0.40f) / 0.20f; }
+		else if (t < 0.70f)                   { horizT = 1.0f;                         vertT = 1.5f - (t - 0.60f) / 0.10f * 0.5f; }
+		else                                  { horizT = 1.0f;                         vertT = 1.0f - (t - 0.70f) / 0.30f * 0.3f; }
+
+		const float forwardProgress = (t < 0.40f) ? 1.0f - powf(1.0f - horizT, 3.0f) : horizT;
+		const float heightLift = HeightLDU * sinf(vertT * LC_PI * 0.6f);
+		const float heightDrop = (t > 0.60f) ? (t - 0.60f) / 0.40f * HeightLDU * 0.6f : 0.0f;
+
+		lcVector3 BodyPos = ForwardAxis * KnockbackLDU * forwardProgress;
+		BodyPos.z += heightLift - heightDrop;
+
+		// === Body rotation (tumble) ===
+		const lcVector3 TumbleAxis(-ForwardAxis.y, ForwardAxis.x, 0.0f);
+		float TumbleAngle;
+		if (t < 0.10f)      TumbleAngle = 0.0f;
+		else if (t < 0.50f) TumbleAngle = (t - 0.10f) / 0.40f * 110.0f;
+		else if (t < 0.60f) TumbleAngle = 110.0f + (t - 0.50f) / 0.10f * 30.0f;
+		else if (t < 0.70f) TumbleAngle = 140.0f - (t - 0.60f) / 0.10f * 40.0f;
+		else                TumbleAngle = 100.0f - (t - 0.70f) / 0.30f * 10.0f;
+
+		const lcMatrix33 BodyRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(TumbleAxis.x, TumbleAxis.y, TumbleAxis.z, LC_DTOR * TumbleAngle)));
+
+		// === Limb rotations ===
+		const float armFlail = (t < 0.10f) ? 0.0f :
+			(t < 0.50f) ? (t - 0.10f) / 0.40f * 150.0f + sinf(t * LC_2PI * 2.0f) * 20.0f :
+			(t < 0.65f) ? 170.0f + sinf(t * LC_2PI * 3.0f) * 10.0f :
+			130.0f + (1.0f - (t - 0.65f) / 0.35f) * 20.0f;
+
+		const float legSplay = (t < 0.10f) ? 0.0f :
+			(t < 0.40f) ? (t - 0.10f) / 0.30f * 60.0f :
+			(t < 0.60f) ? 60.0f + (t - 0.40f) / 0.20f * 20.0f :
+			(t < 0.70f) ? 80.0f + (t - 0.60f) / 0.10f * 10.0f :
+			90.0f;
+
+		const float headLag = (t < 0.10f) ? 0.0f :
+			(t < 0.50f) ? (t - 0.10f) / 0.40f * 80.0f :
+			(t < 0.65f) ? 80.0f + (t - 0.50f) / 0.15f * 30.0f :
+			110.0f - (t - 0.65f) / 0.35f * 20.0f;
+
+		const lcMatrix33 RArmRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * -armFlail)));
+		const lcMatrix33 LArmRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * armFlail)));
+		const lcMatrix33 RLegRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * -legSplay)));
+		const lcMatrix33 LLegRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(0.0f, 0.0f, 1.0f, LC_DTOR * legSplay)));
+		const lcMatrix33 HeadRot = lcQuaternionToMatrix33(lcQuaternionFromAxisAngle(lcVector4(TumbleAxis.x, TumbleAxis.y, TumbleAxis.z, LC_DTOR * -headLag)));
+		const lcMatrix33 Identity = lcMatrix33Identity();
+
+		auto ApplyToPieces = [&](const std::vector<lcPiece*>& Pieces, const lcMatrix33& ExtraRot)
+		{
+			for (lcPiece* Piece : Pieces)
+			{
+				const lcStartPose& Start = StartPoses[Piece];
+				const lcVector3 NewPos = BodyPos + lcMul(Start.Position - BodyCenter, BodyRot) + BodyCenter;
+				const lcMatrix33 NewRot = lcMul(lcMul(Start.Rotation, BodyRot), ExtraRot);
+
+				Piece->SetPosition(NewPos, 1, false);
+				Piece->SetRotation(NewRot, 1, false);
+				Piece->UpdatePosition(1);
+			}
+		};
+
+		ApplyToPieces(TorsoPieces, Identity);
+		ApplyToPieces(OtherPieces, Identity);
+		ApplyToPieces(HeadPieces, HeadRot);
+		ApplyToPieces(RightArmPieces, RArmRot);
+		ApplyToPieces(LeftArmPieces, LArmRot);
+		ApplyToPieces(RightLegPieces, RLegRot);
+		ApplyToPieces(LeftLegPieces, LLegRot);
+
+		NewFrames.push_back(SnapshotFrame(Model));
+	}
+
+	mSkipAutoKeyframe = true;
+	Model->RunInHistorySequence(tr("Ragdoll Death"), [&]()
+	{
+		lcAnimateDocumentState& State = GetState(Model);
+		State.Frames = std::move(NewFrames);
+		State.CurrentFrameIndex = 0;
+		State.ThumbnailCache.clear();
+
+		if (State.AnimateMode == lcAnimateMode::ConstantKeyframe)
+		{
+			State.Keyframes.clear();
+			for (int i = 0; i < (int)State.Frames.size(); i++)
+			{
+				lcKeyframePoint Kf;
+				Kf.Time = i;
+				Kf.Pose.Positions = State.Frames[i].Positions;
+				Kf.Pose.Rotations = State.Frames[i].Rotations;
+				Kf.Pose.CameraPosition = State.Frames[i].CameraPosition;
+				Kf.Pose.CameraTarget = State.Frames[i].CameraTarget;
+				Kf.Pose.CameraUpVector = State.Frames[i].CameraUpVector;
+				Kf.Pose.CameraProjection = State.Frames[i].CameraProjection;
+				Kf.Pose.HasCamera = State.Frames[i].HasCamera;
+				Kf.SegmentEasing = lcEasingType::Linear;
+				State.Keyframes.push_back(Kf);
+			}
+		}
+	});
+
+	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
+	mSkipAutoKeyframe = false;
 	mLastAutoKeyframeDigest = SnapshotFrame(Model);
 
 	mTimelineWidget->SetKeyframes(&GetState(Model).Keyframes);

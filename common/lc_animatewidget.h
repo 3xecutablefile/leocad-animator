@@ -128,6 +128,7 @@ public slots:
 	void AttachToHandClicked();
 	void MirrorPoseClicked();
 	void WalkCycleClicked();
+	void RagdollClicked();
 	void ModeChanged(int Index);
 	void AddKeyframeClicked();
 	void DeleteKeyframeClicked();
