@@ -247,8 +247,8 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	mAddKeyframeButton->setToolTip(tr("Capture the current pose as a new keyframe on the timeline"));
 	mDeleteKeyframeButton = new QPushButton(tr("Delete Keyframe"), this);
 	mDeleteKeyframeButton->setToolTip(tr("Remove the selected keyframe"));
-	mClearKeyframeButton = new QPushButton(tr("Clear Keyframe"), this);
-	mClearKeyframeButton->setToolTip(tr("Remove the keyframe at the current time"));
+	mClearKeyframeButton = new QPushButton(tr("Clear All"), this);
+	mClearKeyframeButton->setToolTip(tr("Delete all keyframes and frames"));
 	KFButtonRow->addWidget(mStepBackButton);
 	KFButtonRow->addWidget(mStepForwardButton);
 	KFButtonRow->addWidget(mAddKeyframeButton);
@@ -1091,15 +1091,6 @@ void lcAnimateWidget::WalkCycleClicked()
 	ArmSwingSpin->setDecimals(0);
 	Form->addRow(tr("Arm swing:"), ArmSwingSpin);
 
-	QSlider* SpeedSlider = new QSlider(Qt::Horizontal, &Dialog);
-	SpeedSlider->setRange(1, 10);
-	SpeedSlider->setValue(5);
-	SpeedSlider->setTickPosition(QSlider::TicksBelow);
-	SpeedSlider->setTickInterval(1);
-	QLabel* SpeedLabel = new QLabel(&Dialog);
-	Form->addRow(tr("Speed (slower ← → faster):"), SpeedSlider);
-	Form->addRow(new QWidget(&Dialog), SpeedLabel);
-
 	QDoubleSpinBox* DirSpin = new QDoubleSpinBox(&Dialog);
 	DirSpin->setRange(0.0, 359.0);
 	DirSpin->setSuffix(tr(" deg"));
@@ -1118,13 +1109,6 @@ void lcAnimateWidget::WalkCycleClicked()
 	TempWiz->SetPieceInfo(LC_MFW_RLEG, RightLegPieces.front()->mPieceInfo);
 	TempWiz->SetAngle(LC_MFW_RLEG, 0.0f);
 	const float LegLen = TempWiz->mMinifig.Matrices[LC_MFW_RLEG].r[3].z + 44.0f;
-
-	auto UpdateLabels = [&]()
-	{
-		const int speed = SpeedSlider->value();
-		const int steps = 4 + (10 - speed) * 4;
-		SpeedLabel->setText(tr("~%1 frames").arg(steps));
-	};
 
 	auto UpdateStrideFromDist = [&]()
 	{
@@ -1150,13 +1134,11 @@ void lcAnimateWidget::WalkCycleClicked()
 		else if (gait == 1) { stride = 35.0; }
 		else { stride = 25.0; }
 		StrideSpin->setValue(stride);
-		UpdateLabels();
 	};
 
 	bool DistanceGuard = false;
 	QObject::connect(GaitCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [&](int) { UpdateFromGait(); });
-	QObject::connect(SpeedSlider, &QSlider::valueChanged, [&](int) { UpdateLabels(); });
-	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateDistFromStride(); DistanceGuard = false; } UpdateLabels(); });
+	QObject::connect(StrideSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateDistFromStride(); DistanceGuard = false; } });
 	QObject::connect(DistSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [&](double) { if (!DistanceGuard) { DistanceGuard = true; UpdateStrideFromDist(); DistanceGuard = false; } });
 
 	QDialogButtonBox* Buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &Dialog);
@@ -1169,7 +1151,7 @@ void lcAnimateWidget::WalkCycleClicked()
 	if (!Dialog.exec())
 		return;
 
-	const int Steps = 4 + (10 - SpeedSlider->value()) * 4;
+	const int Steps = 24;
 	const double StrideAngle = StrideSpin->value();
 	const double ArmSwingAngle = ArmSwingSpin->value();
 	const double DirectionDeg = DirSpin->value();
@@ -1726,26 +1708,13 @@ void lcAnimateWidget::ClearKeyframeClicked()
 		return;
 
 	lcAnimateDocumentState& State = GetState(Model);
-	const int CurTime = mTimelineWidget->GetCurrentTime();
-
-	for (size_t i = 0; i < State.Keyframes.size(); i++)
-	{
-		if (State.Keyframes[i].Time == CurTime)
-		{
-			State.Keyframes.erase(State.Keyframes.begin() + i);
-			mTimelineWidget->SetKeyframes(&State.Keyframes);
-
-			if (State.Keyframes.size() < 2)
-				State.Frames.clear();
-			else
-				BakeKeyframes(Model, State);
-
-			RefreshFilmstrip(Model);
-			mTimelineWidget->update();
-			Update();
-			return;
-		}
-	}
+	State.Keyframes.clear();
+	State.Frames.clear();
+	State.ThumbnailCache.clear();
+	mTimelineWidget->SetKeyframes(&State.Keyframes);
+	RefreshFilmstrip(Model);
+	mTimelineWidget->update();
+	Update();
 }
 
 void lcAnimateWidget::EasingChanged(int Index)
