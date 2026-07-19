@@ -183,6 +183,10 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	mFpsSpinBox->setRange(1, 60);
 	mFpsSpinBox->setValue(12);
 	PlayRow->addWidget(mFpsSpinBox);
+	mAutoKeyframeCheck = new QCheckBox(tr("Auto Key"), this);
+	mAutoKeyframeCheck->setChecked(true);
+	mAutoKeyframeCheck->setToolTip(tr("Automatically add a keyframe when the scene changes in Constant Keyframe mode"));
+	PlayRow->addWidget(mAutoKeyframeCheck);
 	PlayLayout->addLayout(PlayRow);
 	mFrameLabel = new QLabel(tr("Frame 1 / 1"), this);
 	PlayLayout->addWidget(mFrameLabel);
@@ -295,6 +299,40 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(mTimelineWidget, &lcKeyframeTimelineWidget::CurrentTimeDragged, this, &lcAnimateWidget::TimelineTimeDragged);
 	connect(mStepBackButton, &QPushButton::clicked, this, [this]() { TimelineStep(-10); });
 	connect(mStepForwardButton, &QPushButton::clicked, this, [this]() { TimelineStep(10); });
+	connect(mFpsSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int NewFps)
+	{
+		if (NewFps == mFpsLastValue)
+			return;
+
+		lcModel* Model = lcGetActiveModel();
+		if (!Model)
+		{
+			mFpsLastValue = NewFps;
+			return;
+		}
+
+		lcAnimateDocumentState& State = GetState(Model);
+		if (State.AnimateMode != lcAnimateMode::ConstantKeyframe)
+		{
+			mFpsLastValue = NewFps;
+			return;
+		}
+
+		const float Ratio = (float)NewFps / (float)mFpsLastValue;
+		mFpsLastValue = NewFps;
+
+		if (Ratio == 1.0f)
+			return;
+
+		for (lcKeyframePoint& Kf : State.Keyframes)
+			Kf.Time = qRound(Kf.Time * Ratio);
+
+		BakeKeyframes(Model, State);
+		mTimelineWidget->SetKeyframes(&State.Keyframes);
+		mTimelineWidget->SetFrameRange(0, std::max((int)State.Frames.size(), 10));
+		mTimelineWidget->SetCurrentTime(State.CurrentFrameIndex);
+		Update();
+	});
 
 	SocketModeToggled(mSocketModeCheck->isChecked());
 }
@@ -353,13 +391,20 @@ lcAnimateFrame lcAnimateWidget::SnapshotFrame(lcModel* Model) const
 
 void lcAnimateWidget::ApplyFrame(lcModel* Model, int FrameIndex)
 {
+	mIsApplyingFrame = true;
+
 	lcAnimateDocumentState& State = GetState(Model);
 
 	if (FrameIndex < 0 || FrameIndex >= static_cast<int>(State.Frames.size()))
+	{
+		mIsApplyingFrame = false;
 		return;
+	}
 
 	lcPoseAnimateFrame(Model, State.Frames[FrameIndex], State.AnimateForcedHidden);
 	Model->SetCurrentStep(1); // redraws the live viewport and refreshes the rest of the UI
+
+	mIsApplyingFrame = false;
 }
 
 QIcon lcAnimateWidget::RenderFrameThumbnail(lcModel* Model, int FrameIndex, int Width, int Height)
@@ -393,12 +438,31 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 	mIgnoreUpdates = true;
 	mFilmstrip->clear();
 
-	// Snapshot whatever is actually live on screen right now - which may be an uncaptured edit
-	// that doesn't match State.Frames[State.CurrentFrameIndex] yet - before any temporary
-	// re-posing below, so we restore the real live state and never silently discard an
-	// in-progress move.
+	// Snapshot ALL pieces (including hidden ones) before any temporary re-posing for thumbnails.
+	// Using SnapshotFrame (which skips hidden pieces) would lose them - thumbnail rendering below
+	// hides pieces that don't belong to a frame, and the restore step wouldn't know about pieces
+	// that were already hidden by the animation system before the refresh.
 	lcAnimateFrame LiveState;
 	bool NeedsViewportRestore = false;
+
+	for (const std::unique_ptr<lcPiece>& Piece : Model->GetPieces())
+	{
+		lcPiece* Ptr = Piece.get();
+		LiveState.Positions[Ptr] = Ptr->GetPosition();
+		LiveState.Rotations[Ptr] = Ptr->GetRotation();
+	}
+
+	if (lcView* View = gMainWindow->GetActiveView())
+	{
+		if (lcCamera* Camera = View->GetCamera())
+		{
+			LiveState.CameraPosition = Camera->GetPosition();
+			LiveState.CameraTarget = Camera->GetTargetPosition();
+			LiveState.CameraUpVector = Camera->GetUpVector();
+			LiveState.CameraProjection = Camera->GetProjection();
+			LiveState.HasCamera = true;
+		}
+	}
 
 	for (int Index = 0; Index < static_cast<int>(State.Frames.size()); Index++)
 	{
@@ -406,9 +470,6 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 
 		if (Icon.isNull())
 		{
-			if (!NeedsViewportRestore)
-				LiveState = SnapshotFrame(Model);
-
 			Icon = RenderFrameThumbnail(Model, Index, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
 			State.ThumbnailCache.insert(Index, Icon);
 			NeedsViewportRestore = true;
@@ -517,6 +578,37 @@ void lcAnimateWidget::Update()
 			else
 			{
 				ActiveView->ClearGhost();
+			}
+		}
+
+		// Auto-keyframe in Constant Keyframe mode
+		if (State.AnimateMode == lcAnimateMode::ConstantKeyframe && mAutoKeyframeCheck->isChecked() && !mIsApplyingFrame && !mSkipAutoKeyframe)
+		{
+			const lcAnimateFrame CurrentSnapshot = SnapshotFrame(Model);
+
+			if (!mAutoKeyframeInitialized)
+			{
+				mLastAutoKeyframeDigest = CurrentSnapshot;
+				mAutoKeyframeInitialized = true;
+			}
+			else if (CurrentSnapshot.Positions != mLastAutoKeyframeDigest.Positions || CurrentSnapshot.Rotations != mLastAutoKeyframeDigest.Rotations)
+			{
+				lcKeyframePoint Pt;
+				Pt.Time = State.CurrentFrameIndex;
+				Pt.Pose.Positions = CurrentSnapshot.Positions;
+				Pt.Pose.Rotations = CurrentSnapshot.Rotations;
+				Pt.Pose.CameraPosition = CurrentSnapshot.CameraPosition;
+				Pt.Pose.CameraTarget = CurrentSnapshot.CameraTarget;
+				Pt.Pose.CameraUpVector = CurrentSnapshot.CameraUpVector;
+				Pt.Pose.CameraProjection = CurrentSnapshot.CameraProjection;
+				Pt.Pose.HasCamera = CurrentSnapshot.HasCamera;
+
+				State.Keyframes.push_back(Pt);
+				mTimelineWidget->SetKeyframes(&State.Keyframes);
+				BakeKeyframes(Model, State);
+				RefreshFilmstrip(Model);
+
+				mLastAutoKeyframeDigest = CurrentSnapshot;
 			}
 		}
 	}
@@ -759,6 +851,7 @@ void lcAnimateWidget::AttachToHandClicked()
 		return;
 	}
 
+	mSkipAutoKeyframe = true;
 	Model->RunInHistorySequence(tr("Attach to Hand"), [&]()
 	{
 		const lcMatrix44 HandWorldMatrix(HandPiece->GetRotation(), HandPiece->GetPosition());
@@ -773,6 +866,7 @@ void lcAnimateWidget::AttachToHandClicked()
 	});
 
 	Model->SetCurrentStep(1);
+	mSkipAutoKeyframe = false;
 }
 
 void lcAnimateWidget::MirrorPoseClicked()
@@ -855,11 +949,13 @@ void lcAnimateWidget::MirrorPoseClicked()
 		return;
 	}
 
+	mSkipAutoKeyframe = true;
 	Model->RunInHistorySequence(tr("Mirror Pose"), [&]()
 	{
 		TargetPiece->SetRotation(SourcePiece->GetRotation(), 1, false);
 		TargetPiece->UpdatePosition(1);
 	});
+	mSkipAutoKeyframe = false;
 }
 
 void lcAnimateWidget::WalkCycleClicked()
@@ -1241,6 +1337,7 @@ void lcAnimateWidget::WalkCycleClicked()
 		NewFrames.push_back(SnapshotFrame(Model));
 	}
 
+	mSkipAutoKeyframe = true;
 	Model->RunInHistorySequence(tr("Walk Cycle"), [&]()
 	{
 		lcAnimateDocumentState& State = GetState(Model);
@@ -1250,6 +1347,7 @@ void lcAnimateWidget::WalkCycleClicked()
 	});
 
 	ApplyFrame(Model, GetState(Model).CurrentFrameIndex);
+	mSkipAutoKeyframe = false;
 	Update();
 }
 
@@ -1259,11 +1357,16 @@ void lcAnimateWidget::ModeChanged(int Index)
 	if (!Model)
 		return;
 
+	mSkipAutoKeyframe = true;
+
 	lcAnimateDocumentState& State = GetState(Model);
 	const lcAnimateMode NewMode = (Index == 0) ? lcAnimateMode::StopMotion : lcAnimateMode::ConstantKeyframe;
 
 	if (NewMode == State.AnimateMode)
+	{
+		mSkipAutoKeyframe = false;
 		return;
+	}
 
 	// Switching from Constant Keyframe → Stop Motion: bake sparse keyframes into full frame list.
 	if (State.AnimateMode == lcAnimateMode::ConstantKeyframe && NewMode == lcAnimateMode::StopMotion)
@@ -1272,11 +1375,48 @@ void lcAnimateWidget::ModeChanged(int Index)
 		RefreshFilmstrip(Model);
 	}
 
+	// Switching from Stop Motion → Constant Keyframe: if frames exist but no keyframes yet,
+	// create keyframes at the first and last frame so the timeline has something to work with.
+	if (State.AnimateMode == lcAnimateMode::StopMotion && NewMode == lcAnimateMode::ConstantKeyframe)
+	{
+		if (State.Keyframes.empty() && !State.Frames.empty())
+		{
+			lcKeyframePoint KfStart;
+			KfStart.Time = 0;
+			KfStart.Pose.Positions = State.Frames.front().Positions;
+			KfStart.Pose.Rotations = State.Frames.front().Rotations;
+			KfStart.Pose.CameraPosition = State.Frames.front().CameraPosition;
+			KfStart.Pose.CameraTarget = State.Frames.front().CameraTarget;
+			KfStart.Pose.CameraUpVector = State.Frames.front().CameraUpVector;
+			KfStart.Pose.CameraProjection = State.Frames.front().CameraProjection;
+			KfStart.Pose.HasCamera = State.Frames.front().HasCamera;
+			State.Keyframes.push_back(KfStart);
+
+			lcKeyframePoint KfEnd;
+			KfEnd.Time = (int)State.Frames.size() - 1;
+			KfEnd.Pose.Positions = State.Frames.back().Positions;
+			KfEnd.Pose.Rotations = State.Frames.back().Rotations;
+			KfEnd.Pose.CameraPosition = State.Frames.back().CameraPosition;
+			KfEnd.Pose.CameraTarget = State.Frames.back().CameraTarget;
+			KfEnd.Pose.CameraUpVector = State.Frames.back().CameraUpVector;
+			KfEnd.Pose.CameraProjection = State.Frames.back().CameraProjection;
+			KfEnd.Pose.HasCamera = State.Frames.back().HasCamera;
+			State.Keyframes.push_back(KfEnd);
+
+			BakeKeyframes(Model, State);
+			RefreshFilmstrip(Model);
+		}
+	}
+
 	State.AnimateMode = NewMode;
 
 	// Capture button only makes sense in Stop Motion mode (Constant Keyframe uses the timeline).
 	mCaptureButton->setVisible(NewMode == lcAnimateMode::StopMotion);
 	mKeyframeControls->setVisible(NewMode == lcAnimateMode::ConstantKeyframe);
+
+	// Clamp current frame index after any BakeKeyframes (which may have shrunk the frame range).
+	if (State.CurrentFrameIndex >= (int)State.Frames.size())
+		State.CurrentFrameIndex = std::max(0, (int)State.Frames.size() - 1);
 
 	if (NewMode == lcAnimateMode::ConstantKeyframe)
 	{
@@ -1285,7 +1425,10 @@ void lcAnimateWidget::ModeChanged(int Index)
 		mTimelineWidget->SetCurrentTime(State.CurrentFrameIndex);
 	}
 
-	Update();
+	// Apply the current frame so the viewport is in sync after the mode switch.
+	ApplyFrame(Model, State.CurrentFrameIndex);
+
+	mSkipAutoKeyframe = false;
 }
 
 void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& State)
@@ -1376,7 +1519,7 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 		for (auto It = KfB->Pose.Positions.constBegin(); It != KfB->Pose.Positions.constEnd(); ++It)
 		{
 			if (!Frame.Positions.contains(It.key()))
-				Frame.Positions[It.key()] = It.value();
+				continue; // not in KfA → doesn't exist yet at this frame time
 		}
 
 		// Interpolate rotations via axis-angle decomposition
@@ -1403,7 +1546,7 @@ void lcAnimateWidget::BakeKeyframes(lcModel* Model, lcAnimateDocumentState& Stat
 		for (auto It = KfB->Pose.Rotations.constBegin(); It != KfB->Pose.Rotations.constEnd(); ++It)
 		{
 			if (!Frame.Rotations.contains(It.key()))
-				Frame.Rotations[It.key()] = It.value();
+				continue; // not in KfA → doesn't exist yet at this frame time
 		}
 
 		// Interpolate camera

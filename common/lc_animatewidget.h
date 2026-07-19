@@ -175,4 +175,11 @@ protected:
 
 	bool mIgnoreUpdates = false;
 	bool mUpdating = false;
+
+	QCheckBox* mAutoKeyframeCheck;
+	int mFpsLastValue = 12;
+	bool mIsApplyingFrame = false;
+	bool mSkipAutoKeyframe = false;
+	bool mAutoKeyframeInitialized = false;
+	lcAnimateFrame mLastAutoKeyframeDigest;
 };
