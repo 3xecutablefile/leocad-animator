@@ -5,6 +5,7 @@
 #include "lc_model.h"
 #include "lc_mainwindow.h"
 #include "lc_view.h"
+#include "lc_viewwidget.h"
 #include "camera.h"
 #include "project.h"
 #include "object.h"
@@ -1167,6 +1168,59 @@ void lcAnimateWidget::WalkCycleClicked()
 
 		if (!GhostPos.isEmpty())
 			ActiveView->SetGhostFrame(GhostPos, GhostRot, 0.3f);
+
+		// Render a QImage overlay at small size as guaranteed-visibility fallback
+		QMap<lcPiece*, lcVector3> SavedPos;
+		QMap<lcPiece*, lcMatrix33> SavedRot;
+		QMap<lcPiece*, bool> SavedHidden;
+
+		for (const std::unique_ptr<lcPiece>& P : Model->GetPieces())
+		{
+			lcPiece* Ptr = P.get();
+			SavedPos[Ptr] = Ptr->GetPosition();
+			SavedRot[Ptr] = Ptr->GetRotation();
+			SavedHidden[Ptr] = P->IsHidden();
+		}
+
+		for (auto It = GhostPos.constBegin(); It != GhostPos.constEnd(); ++It)
+		{
+			It.key()->SetPosition(It.value(), 1, false);
+			It.key()->SetRotation(GhostRot.value(It.key()), 1, false);
+			It.key()->SetHidden(false);
+		}
+		Model->SetCurrentStep(1);
+
+		lcView TempView(lcViewType::View, Model);
+		TempView.SetOffscreenContext();
+		TempView.MakeCurrent();
+
+		const int PW = 320, PH = 240;
+		TempView.SetSize(PW, PH);
+
+		lcCamera* Cam = ActiveView->GetCamera();
+		if (Cam)
+		{
+			TempView.GetCamera()->CopyPosition(Cam);
+			TempView.GetCamera()->SetProjection(Cam->GetProjection());
+		}
+
+		std::vector<QImage> Images = TempView.GetStepImages(1, 1);
+		if (!Images.empty())
+		{
+			QImage Scaled = Images.front().scaled(PW, PH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+			lcViewWidget* W = ActiveView->GetWidget();
+			if (W)
+				W->ShowGhostImage(Scaled);
+		}
+
+		for (auto It = SavedPos.constBegin(); It != SavedPos.constEnd(); ++It)
+		{
+			It.key()->SetPosition(It.value(), 1, false);
+			It.key()->SetRotation(SavedRot.value(It.key()), 1, false);
+			It.key()->SetHidden(SavedHidden.value(It.key()));
+		}
+		Model->SetCurrentStep(1);
 	};
 
 	bool DistanceGuard = false;
@@ -1184,15 +1238,22 @@ void lcAnimateWidget::WalkCycleClicked()
 	UpdateFromGait();
 	UpdateDistFromStride();
 	UpdateWalkProjection();
-	Dialog.move(gMainWindow->mapToGlobal(QPoint(gMainWindow->width() + 10, 100)));
 	if (!Dialog.exec())
 	{
 		if (lcView* V = gMainWindow->GetActiveView())
+		{
 			V->ClearGhost();
+			if (lcViewWidget* W = V->GetWidget())
+				W->ClearGhostImage();
+		}
 		return;
 	}
 	if (lcView* V = gMainWindow->GetActiveView())
+	{
 		V->ClearGhost();
+		if (lcViewWidget* W = V->GetWidget())
+			W->ClearGhostImage();
+	}
 
 	const int Steps = 24;
 	const double StrideAngle = StrideSpin->value();

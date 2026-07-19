@@ -13,6 +13,9 @@ public:
 
 	void UpdateMousePosition();
 
+	void ShowGhostImage(const QImage& Image);
+	void ClearGhostImage();
+
 	QSize sizeHint() const override;
 
 	float GetDeviceScale() const
@@ -28,6 +31,7 @@ protected:
 	void initializeGL() override;
 	void resizeGL(int Width, int Height) override;
 	void paintGL() override;
+	void paintEvent(QPaintEvent* Event) override;
 	bool event(QEvent* Event) override;
 	void focusInEvent(QFocusEvent* FocusEvent) override;
 	void focusOutEvent(QFocusEvent* FocusEvent) override;
@@ -46,5 +50,6 @@ protected:
 
 	std::unique_ptr<lcView> mView;
 	QSize mPreferredSize;
+	QImage mGhostImage;
 	int mWheelAccumulator = 0;
 };

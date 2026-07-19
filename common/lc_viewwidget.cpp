@@ -11,6 +11,7 @@
 #include "lc_mesh.h"
 #include "lc_profile.h"
 #include "lc_previewwidget.h"
+#include <QPainter>
 
 lcViewWidget::lcViewWidget(QWidget* Parent, lcView* View)
 	: QOpenGLWidget(Parent), mView(View)
@@ -85,6 +86,30 @@ void lcViewWidget::resizeGL(int Width, int Height)
 void lcViewWidget::paintGL()
 {
 	mView->OnDraw();
+}
+
+void lcViewWidget::paintEvent(QPaintEvent* Event)
+{
+	QOpenGLWidget::paintEvent(Event);
+
+	if (!mGhostImage.isNull())
+	{
+		QPainter p(this);
+		p.setOpacity(0.4);
+		p.drawImage(0, 0, mGhostImage.scaled(width(), height(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+	}
+}
+
+void lcViewWidget::ShowGhostImage(const QImage& Image)
+{
+	mGhostImage = Image;
+	update();
+}
+
+void lcViewWidget::ClearGhostImage()
+{
+	mGhostImage = QImage();
+	update();
 }
 
 bool lcViewWidget::event(QEvent* Event)
