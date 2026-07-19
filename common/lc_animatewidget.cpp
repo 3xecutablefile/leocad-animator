@@ -247,10 +247,13 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	mAddKeyframeButton->setToolTip(tr("Capture the current pose as a new keyframe on the timeline"));
 	mDeleteKeyframeButton = new QPushButton(tr("Delete Keyframe"), this);
 	mDeleteKeyframeButton->setToolTip(tr("Remove the selected keyframe"));
+	mClearKeyframeButton = new QPushButton(tr("Clear Keyframe"), this);
+	mClearKeyframeButton->setToolTip(tr("Remove the keyframe at the current time"));
 	KFButtonRow->addWidget(mStepBackButton);
 	KFButtonRow->addWidget(mStepForwardButton);
 	KFButtonRow->addWidget(mAddKeyframeButton);
 	KFButtonRow->addWidget(mDeleteKeyframeButton);
+	KFButtonRow->addWidget(mClearKeyframeButton);
 	KFButtonRow->addWidget(new QLabel(tr("Easing:"), this));
 	mEasingCombo = new QComboBox(this);
 	mEasingCombo->addItems({ tr("Linear"), tr("Ease In"), tr("Ease Out"), tr("Ease In/Out") });
@@ -294,6 +297,7 @@ lcAnimateWidget::lcAnimateWidget(QWidget* Parent)
 	connect(mModeSelector, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &lcAnimateWidget::ModeChanged);
 	connect(mAddKeyframeButton, &QPushButton::clicked, this, &lcAnimateWidget::AddKeyframeClicked);
 	connect(mDeleteKeyframeButton, &QPushButton::clicked, this, &lcAnimateWidget::DeleteKeyframeClicked);
+	connect(mClearKeyframeButton, &QPushButton::clicked, this, &lcAnimateWidget::ClearKeyframeClicked);
 	connect(mEasingCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &lcAnimateWidget::EasingChanged);
 	connect(mTimelineWidget, &lcKeyframeTimelineWidget::KeyframeSelected, this, &lcAnimateWidget::TimelineKeyframeSelected);
 	connect(mTimelineWidget, &lcKeyframeTimelineWidget::CurrentTimeDragged, this, &lcAnimateWidget::TimelineTimeDragged);
@@ -1100,7 +1104,7 @@ void lcAnimateWidget::WalkCycleClicked()
 	DirSpin->setRange(0.0, 359.0);
 	DirSpin->setSuffix(tr(" deg"));
 	DirSpin->setDecimals(0);
-	DirSpin->setToolTip(tr("0 = forward along +Y, 90 = along +X"));
+	DirSpin->setToolTip(tr("0 = minifig's natural forward, 90 = right"));
 	Form->addRow(tr("Direction:"), DirSpin);
 
 	QDoubleSpinBox* DistSpin = new QDoubleSpinBox(&Dialog);
@@ -1274,9 +1278,9 @@ void lcAnimateWidget::WalkCycleClicked()
 	for (lcPiece* Piece : OtherPieces)
 		StartPoses[Piece] = { Piece->GetPosition(), Piece->GetRotation() };
 
-	// Forward direction based on user's angle: 0 = +Y, rotates CCW as angle increases.
+	// Forward direction based on user's angle: 0 = -Y (minifig's natural forward), rotates CCW as angle increases.
 	const float DirRad = LC_DTOR * static_cast<float>(DirectionDeg);
-	lcVector3 ForwardAxis(sinf(DirRad), cosf(DirRad), 0.0f);
+	lcVector3 ForwardAxis(-sinf(DirRad), -cosf(DirRad), 0.0f);
 
 	// Save the initial (neutral) state as a frame so deleting and re-generating always starts clean.
 	const lcAnimateFrame NeutralFrame = SnapshotFrame(Model);
@@ -1713,6 +1717,35 @@ void lcAnimateWidget::DeleteKeyframeClicked()
 	RefreshFilmstrip(Model);
 	mTimelineWidget->update();
 	Update();
+}
+
+void lcAnimateWidget::ClearKeyframeClicked()
+{
+	lcModel* Model = lcGetActiveModel();
+	if (!Model)
+		return;
+
+	lcAnimateDocumentState& State = GetState(Model);
+	const int CurTime = mTimelineWidget->GetCurrentTime();
+
+	for (size_t i = 0; i < State.Keyframes.size(); i++)
+	{
+		if (State.Keyframes[i].Time == CurTime)
+		{
+			State.Keyframes.erase(State.Keyframes.begin() + i);
+			mTimelineWidget->SetKeyframes(&State.Keyframes);
+
+			if (State.Keyframes.size() < 2)
+				State.Frames.clear();
+			else
+				BakeKeyframes(Model, State);
+
+			RefreshFilmstrip(Model);
+			mTimelineWidget->update();
+			Update();
+			return;
+		}
+	}
 }
 
 void lcAnimateWidget::EasingChanged(int Index)

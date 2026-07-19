@@ -131,6 +131,7 @@ public slots:
 	void ModeChanged(int Index);
 	void AddKeyframeClicked();
 	void DeleteKeyframeClicked();
+	void ClearKeyframeClicked();
 	void EasingChanged(int Index);
 	void TimelineKeyframeSelected(int Index);
 	void TimelineTimeDragged(int Frame);
@@ -153,6 +154,7 @@ protected:
 	QPushButton* mStepForwardButton;
 	QPushButton* mAddKeyframeButton;
 	QPushButton* mDeleteKeyframeButton;
+	QPushButton* mClearKeyframeButton;
 	QComboBox* mEasingCombo;
 	QCheckBox* mSocketModeCheck;
 	QCheckBox* mOnionSkinCheck;
