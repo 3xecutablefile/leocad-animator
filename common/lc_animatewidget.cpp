@@ -502,8 +502,15 @@ void lcAnimateWidget::RefreshFilmstrip(lcModel* Model)
 
 void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 {
+	lcView* ActiveView = gMainWindow->GetActiveView();
+	lcViewWidget* ViewWidget = ActiveView ? ActiveView->GetWidget() : nullptr;
+
 	if (!mOnionSkinCheck->isChecked())
 	{
+		if (ActiveView)
+			ActiveView->ClearGhost();
+		if (ViewWidget)
+			ViewWidget->ClearGhostImage();
 		mOnionSkinPreview->setPixmap(QPixmap());
 		mOnionSkinPreview->setText(tr("Onion skin off"));
 		return;
@@ -513,18 +520,39 @@ void lcAnimateWidget::RefreshOnionSkin(lcModel* Model)
 
 	if (State.CurrentFrameIndex <= 0)
 	{
+		if (ActiveView)
+			ActiveView->ClearGhost();
+		if (ViewWidget)
+			ViewWidget->ClearGhostImage();
 		mOnionSkinPreview->setPixmap(QPixmap());
 		mOnionSkinPreview->setText(tr("No previous frame"));
 		return;
 	}
 
 	const int PreviousIndex = State.CurrentFrameIndex - 1;
+
+	// Set ghost frame for OpenGL pass
+	if (ActiveView)
+	{
+		const lcAnimateFrame& PrevFrame = State.Frames[PreviousIndex];
+		ActiveView->SetGhostFrame(PrevFrame.Positions, PrevFrame.Rotations, 0.5f);
+	}
+
+	// Render QImage overlay for viewport (works even when OpenGL ghost pass doesn't)
+	if (ViewWidget)
+	{
+		const lcAnimateFrame LiveState = SnapshotFrame(Model);
+		QIcon OverlayIcon = RenderFrameThumbnail(Model, PreviousIndex, 640, 480);
+		ViewWidget->ShowGhostImage(OverlayIcon.pixmap(640, 480).toImage());
+		lcPoseAnimateFrame(Model, LiveState, State.AnimateForcedHidden);
+		Model->SetCurrentStep(1);
+	}
+
+	// Dock thumbnail
 	QIcon Icon = State.ThumbnailCache.value(PreviousIndex);
 
 	if (Icon.isNull())
 	{
-		// Same rule as RefreshFilmstrip: preserve whatever is actually live on screen (which may
-		// be an uncaptured edit), don't snap back to the stored current-frame data.
 		const lcAnimateFrame LiveState = SnapshotFrame(Model);
 
 		Icon = RenderFrameThumbnail(Model, PreviousIndex, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
@@ -576,20 +604,6 @@ void lcAnimateWidget::Update()
 
 		if (!mPlayTimer->isActive())
 			RefreshOnionSkin(Model);
-
-		// Keep viewport ghost in sync with current frame position
-		if (lcView* ActiveView = gMainWindow->GetActiveView())
-		{
-			if (mOnionSkinCheck->isChecked() && State.CurrentFrameIndex > 0)
-			{
-				const lcAnimateFrame& PrevFrame = State.Frames[State.CurrentFrameIndex - 1];
-				ActiveView->SetGhostFrame(PrevFrame.Positions, PrevFrame.Rotations, 0.5f);
-			}
-			else
-			{
-				ActiveView->ClearGhost();
-			}
-		}
 
 		// Auto-keyframe in Constant Keyframe mode
 		if (State.AnimateMode == lcAnimateMode::ConstantKeyframe && mAutoKeyframeCheck->isChecked() && !mIsApplyingFrame && !mSkipAutoKeyframe)
@@ -785,27 +799,12 @@ void lcAnimateWidget::Timeout()
 	Update();
 }
 
-void lcAnimateWidget::OnionSkinToggled(bool Checked)
+void lcAnimateWidget::OnionSkinToggled(bool /*Checked*/)
 {
 	lcModel* Model = lcGetActiveModel();
 
 	if (Model)
-	{
-		lcAnimateDocumentState& State = GetState(Model);
-		lcView* ActiveView = gMainWindow->GetActiveView();
-
-		if (Checked && ActiveView && State.CurrentFrameIndex > 0)
-		{
-			const lcAnimateFrame& PrevFrame = State.Frames[State.CurrentFrameIndex - 1];
-			ActiveView->SetGhostFrame(PrevFrame.Positions, PrevFrame.Rotations, 0.5f);
-		}
-		else if (ActiveView)
-		{
-			ActiveView->ClearGhost();
-		}
-
 		RefreshOnionSkin(Model);
-	}
 }
 
 void lcAnimateWidget::SocketModeToggled(bool Checked)
