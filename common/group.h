@@ -43,8 +43,15 @@ public:
 	// Tags the 6 separate per-limb-assembly groups a Posable minifig is split into (see
 	// lcModel::ShowMinifigDialog) as belonging to the same minifig instance, without making them
 	// an actual parent/child group - that would make GetTopGroup() (and therefore a plain click)
-	// select the whole figure again, defeating independent per-limb posing. Non-minifig groups, and
-	// non-Posable minifigs (which use a single ordinary group already), leave this null.
+	// select the whole figure on every limb, defeating independent per-limb posing. Instead, the
+	// Torso group is the designated "root": every assembly group's mMinifigFamily points at
+	// Torso's group (Torso's own mMinifigFamily points at itself), and lc_view.cpp's plain-click
+	// handler special-cases "clicked group IS its own mMinifigFamily" to mean "select the whole
+	// family" - like grabbing a doll by the torso to move it, while any other limb stays
+	// individually clickable for posing. Alt+click also selects the whole family regardless of
+	// which piece is clicked (lcModel::SelectMinifigFamilyAction), as a power-user shortcut. Non-
+	// minifig groups, and non-Posable minifigs (which use a single ordinary group already), leave
+	// this null.
 	lcGroup* mMinifigFamily = nullptr;
 
 protected:

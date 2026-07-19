@@ -52,6 +52,13 @@ const lcCommand gCommands[] =
 		QT_TRANSLATE_NOOP("Status", "Import a file in LEGO Digital Designer LXF format"),
 		""
 	},
+	// LC_FILE_IMPORT_BRICKLINK
+	{
+		QT_TRANSLATE_NOOP("Action", "File.Import.BrickLinkStudio"),
+		QT_TRANSLATE_NOOP("Menu", "&BrickLink Studio Export..."),
+		QT_TRANSLATE_NOOP("Status", "Import a model exported from BrickLink Studio as LDraw (.ldr/.mpd)"),
+		""
+	},
 	// LC_FILE_IMPORT_INVENTORY
 	{
 		QT_TRANSLATE_NOOP("Action", "File.Import.Inventory"),

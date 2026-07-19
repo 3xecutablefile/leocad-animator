@@ -258,6 +258,7 @@ public:
 	void OpenRecentProject(int RecentFileIndex);
 	void ShowMergeDialog();
 	void ImportLDD();
+	void ImportBrickLinkStudio();
 	void ImportInventory();
 	bool SaveProject(const QString& FileName);
 	bool SaveProjectIfModified();

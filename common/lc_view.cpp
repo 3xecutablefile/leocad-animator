@@ -2673,7 +2673,20 @@ void lcView::OnButtonDown(lcTrackButton TrackButton)
 			else if (mMouseModifiers & Qt::AltModifier)
 				ActiveModel->SelectMinifigFamilyAction(ObjectSection.Object);
 			else
-				ActiveModel->SetSelectionAndFocusAction(std::vector<lcObject*>(), ObjectSection.Object, ObjectSection.Section, gMainWindow->GetSelectionMode());
+			{
+				lcPiece* ClickedPiece = (ObjectSection.Object && ObjectSection.Object->IsPiece()) ? (lcPiece*)ObjectSection.Object : nullptr;
+				lcGroup* ClickedGroup = ClickedPiece ? ClickedPiece->GetGroup() : nullptr;
+
+				// Clicking a minifig's Torso - its "root" (see ShowMinifigDialog), identified by
+				// being its own mMinifigFamily anchor - selects the whole figure, like grabbing a
+				// doll by the torso. Clicking any other limb is a normal single-group click, same
+				// as any other object (GetTopGroup()-based group-select, no special-casing needed
+				// since limb groups have no real parent linking them - see group.h).
+				if (ClickedGroup && ClickedGroup->mMinifigFamily == ClickedGroup)
+					ActiveModel->SelectMinifigFamilyAction(ObjectSection.Object);
+				else
+					ActiveModel->SetSelectionAndFocusAction(std::vector<lcObject*>(), ObjectSection.Object, ObjectSection.Section, gMainWindow->GetSelectionMode());
+			}
 
 			StartTracking(TrackButton);
 		}

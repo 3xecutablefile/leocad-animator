@@ -55,13 +55,29 @@ snapshot-based system:
   in comment at `CaptureClicked`). Piece-level operations (Walk Cycle, Mirror Pose, Attach to
   Hand) use `Model->RunInHistorySequence(tr("..."), [&](){ ... })`.
 
-### `lcGroup::mMinifigFamily`
+### `lcGroup::mMinifigFamily` and the Torso-as-root click model
 
 Tags the 6 per-limb-assembly groups of one Posable minifig as belonging together **without**
-making them a parent/child group. A parent group would make a single click select the whole figure
-— defeating Posable mode's purpose. This tag is only consulted by code explicitly looking for
-"everything belonging to this minifig" (Alt+click, Mirror Pose sibling lookup, Walk Cycle piece
-gathering). Do not repurpose `lcGroup` for this.
+making them a parent/child group (a real parent would make `GetTopGroup()` — and therefore a plain
+click — select the whole figure on *every* limb, defeating independent per-limb posing).
+
+Instead, the **Torso group is the designated "root"**: every assembly group's `mMinifigFamily`
+points at Torso's group, and Torso's own `mMinifigFamily` points at itself (self-referencing —
+this is how code identifies "this group IS the root", see below). Torso is picked deliberately
+over "whichever assembly is created first" (`ShowMinifigDialog` does a dedicated pre-pass for this,
+since Head sorts before Torso in `PartAssembly`'s iteration order) — it's the natural "grab the
+whole doll by the torso" anchor.
+
+- **Plain click on the Torso** → `lc_view.cpp`'s `OnButtonDown` special-cases
+  `ClickedGroup->mMinifigFamily == ClickedGroup` and calls `SelectMinifigFamilyAction` — selects
+  the whole minifig, like grabbing a doll by the torso to move it.
+- **Plain click on any other limb** → normal `GetTopGroup()`-based single-group select (unchanged,
+  same as any other object), since limb groups have no real parent linking them.
+- **Alt+click on any piece, any limb** → also `SelectMinifigFamilyAction` (whole minifig), as an
+  always-available power-user shortcut regardless of which piece is under the cursor.
+
+This tag is consulted by `SelectMinifigFamilyAction`, Mirror Pose's sibling lookup, and Walk
+Cycle's piece gathering. Do not repurpose `lcGroup` (the real `mGroup` parent chain) for this.
 
 ## Feature inventory (all in `common/` unless noted)
 
@@ -77,7 +93,8 @@ gathering). Do not repurpose `lcGroup` for this.
 | Posable minifig grouping | `lc_model.cpp` | 6 top-level groups (Head/Torso/RightArm/LeftArm/RightLeg/LeftLeg), named `"Minifig <Name> #N"` |
 | Attach to Hand | `lc_animatewidget.cpp` | Reuses `MinifigWizard` hand-offset tables. Currently right-hand only |
 | Mirror Pose | `lc_animatewidget.cpp` | **Legs only**. Copies rotation matrix between matched leg pieces (by `mPieceInfo`). Arms unsupported — mirrored parts differ |
-| Alt+click select whole minifig | `lc_model.h/.cpp`, `lc_view.cpp` | Uses `mMinifigFamily` |
+| Select whole minifig | `lc_model.h/.cpp`, `lc_view.cpp` | Alt+click any piece, or plain-click the Torso (the designated "root") - both use `SelectMinifigFamilyAction`/`mMinifigFamily` |
+| Import BrickLink Studio export | `lc_mainwindow.cpp/.h`, `lc_commands.h/.cpp` | File > Import > BrickLink Studio Export - guided alias to the existing LDraw Open path (`.io` isn't parsed; user exports `.ldr`/`.mpd` from Stud.io first) |
 | Walk Cycle generator | `lc_animatewidget.cpp` | Dialog with gait (Walk/Jog/Run), stride angle, arm swing, direction, travel distance readout. Reuses `MinifigWizard::SetAngle/Calculate`. Per-slot wizard mapping for correct arm→hand chains |
 | Gait phase warping | `lc_animatewidget.cpp` | Walk = pure sine, Jog = peaky (2nd harmonic), Run = asymmetric phase modulation |
 | Walk cycle projection ghost | `lc_animatewidget.cpp` | Shows end position ghost in viewport while dialog is open; updates on parameter changes; cleared on dialog close |
@@ -226,6 +243,30 @@ the MCP server's `generate_ragdoll` tool and `compute_ragdoll_frames` helper fro
 instead of rotating whole limb groups around body center, intensity scaled from hit strength) is the
 right starting point technically - just confirm the user actually wants it back first.
 
+### Minifig "grab the whole doll" click model + BrickLink Studio import
+User asked for two things to make posing/importing feel more like Blender:
+
+1. **Click the Torso, move the whole minifig; click any other limb, pose just that limb.**
+   Implemented via the Torso-as-root design (see `lcGroup::mMinifigFamily` section above) - no new
+   selection primitive needed for "select whole figure" (reused the existing
+   `SelectMinifigFamilyAction`, restored from the Alt+click-only version), just a new special case
+   in `lc_view.cpp`'s plain-click handler for "clicked group is its own family root". Went through
+   one false start this session: an earlier attempt made *every* limb's real `mGroup` point at a
+   synthetic parent (so *any* plain click selected the whole figure) - reverted after the user
+   clarified they wanted one specific "root" click target with everything else staying individually
+   grabbable, not a global default flip.
+2. **Import BrickLink Studio sets.** Research (this session) found Stud.io's native `.io` format is
+   an undocumented, password-protected proprietary archive - not worth reverse-engineering blind.
+   But Stud.io already exports directly to standard LDraw (`.ldr`/`.mpd`), and `Project::Load`
+   already handles both formats natively (MPD-splitting included) with zero new parsing code. Added
+   **File > Import > BrickLink Studio Export...** (`lc_mainwindow.cpp` `ImportBrickLinkStudio()`,
+   `LC_FILE_IMPORT_BRICKLINK` in `lc_commands.h/.cpp`) as a guided alias to the existing
+   `OpenProjectFile` path, with an in-app note to export from Stud.io as `.ldr`/`.mpd` first.
+   Verified the underlying MPD-splitting path with a synthetic multi-file `.mpd` test - **not**
+   verified against a real Stud.io export yet (no sample file available this session); if a real
+   export doesn't open cleanly, the gap is most likely bundled-LDraw-library part/color coverage,
+   not the loading path itself.
+
 ## IN PROGRESS / BROKEN
 
 ### Viewport onion skin (replacing dock thumbnail)
@@ -250,6 +291,17 @@ right starting point technically - just confirm the user actually wants it back 
   LDraw library warning labels.
 - **Auto-keyframe at time 0** / at end of frame range (user currently must add keyframes
   explicitly).
+- **Native BrickLink Studio `.io` import** - not attempted (see COMPLETED entry above; `.io` is an
+  undocumented, password-protected proprietary archive with no public schema). Only worth
+  attempting if a user specifically needs it without going through Stud.io's own `.ldr`/`.mpd`
+  export first. Starting point: `common/lc_zipfile.h` (`lcZipFile::ExtractFile`) already handles
+  ZIP extraction; `common/lc_lxf.cpp` + `lcModel::LoadLDD` (`lc_model.cpp`) is the exact precedent
+  for "parse a foreign format into pieces/groups, then `AddPiece`/`AddGroup` directly"; `resources/
+  ldraw2bl.txt` + `common/lc_bricklink.cpp` has an existing LDraw↔BrickLink part/color map
+  (currently export-only, would need inverting). First step: obtain a real `.io` sample and
+  determine whether it's genuinely encrypted or just non-standard-zip before writing any parser.
+- **Timeline/graph-editor curve control and general iteration speed** - flagged by the user as
+  remaining gaps vs. Blender, not scoped or started this session. Worth a dedicated planning pass.
 
 ## MCP Server — AI animation agent (`smd_mcp/`)
 

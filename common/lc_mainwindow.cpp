@@ -468,6 +468,7 @@ void lcMainWindow::CreateMenus()
 	FileMenu->addAction(mActions[LC_FILE_SAVE_IMAGE]);
 	QMenu* ImportMenu = FileMenu->addMenu(tr("&Import"));
 	ImportMenu->addAction(mActions[LC_FILE_IMPORT_LDD]);
+	ImportMenu->addAction(mActions[LC_FILE_IMPORT_BRICKLINK]);
 	ImportMenu->addAction(mActions[LC_FILE_IMPORT_INVENTORY]);
 	QMenu* ExportMenu = FileMenu->addMenu(tr("&Export"));
 	ExportMenu->addAction(mActions[LC_FILE_EXPORT_3DS]);
@@ -2550,6 +2551,29 @@ void lcMainWindow::ImportLDD()
 		delete NewProject;
 }
 
+void lcMainWindow::ImportBrickLinkStudio()
+{
+	if (!SaveProjectIfModified())
+		return;
+
+	// Stud.io's native .io format is an undocumented, password-protected proprietary archive -
+	// no format conversion needed or attempted here. Stud.io can export directly to standard LDraw
+	// (.ldr, or .mpd for models with submodels/posed parts), which OpenProjectFile already loads
+	// exactly like any other LDraw file - this is a guided alias to the normal Open path, not a
+	// separate importer.
+	QMessageBox::information(this, tr("Import BrickLink Studio Export"),
+		tr("StopMotionDigital opens LDraw files directly - Stud.io's native .io format isn't "
+		   "supported yet.\n\nIn Stud.io: File > Export As > LDraw (.ldr or .mpd), then pick that "
+		   "exported file next."));
+
+	const QString LoadFileName = QFileDialog::getOpenFileName(this, tr("Import BrickLink Studio Export"), QString(), tr("LDraw Files (*.ldr *.mpd);;All Files (*.*)"));
+
+	if (LoadFileName.isEmpty())
+		return;
+
+	OpenProjectFile(LoadFileName);
+}
+
 void lcMainWindow::ImportInventory()
 {
 	if (!SaveProjectIfModified())
@@ -2720,6 +2744,10 @@ void lcMainWindow::HandleCommand(lcCommandId CommandId)
 
 	case LC_FILE_IMPORT_LDD:
 		ImportLDD();
+		break;
+
+	case LC_FILE_IMPORT_BRICKLINK:
+		ImportBrickLinkStudio();
 		break;
 
 	case LC_FILE_IMPORT_INVENTORY:

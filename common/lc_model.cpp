@@ -442,8 +442,8 @@ void lcModel::SaveLDraw(QTextStream& Stream, bool SelectedOnly, lcStep LastStep)
 
 					// mMinifigFamily is a runtime-only pointer (see group.h) with no other
 					// serialization - without this, every group's family tag is silently lost on
-					// save/reload, breaking Walk Cycle/Mirror Pose/Alt+click-select-minifig on any
-					// project that's been saved and reopened.
+					// save/reload, breaking Walk Cycle/Mirror Pose/plain-click-select-whole-minifig
+					// on any project that's been saved and reopened.
 					if (Group->mMinifigFamily)
 						Stream << QLatin1String("0 !LEOCAD GROUP MINIFIG_FAMILY ") << Group->mMinifigFamily->mName << LineEnding;
 				}
@@ -4488,6 +4488,11 @@ void lcModel::FocusOrDeselectObjectAction(lcObject* Object, uint32_t Section, lc
 	EndHistorySequence(tr("Selection"));
 }
 
+// Selects every piece belonging to the same Posable minifig as Object (all 6 limb-assembly groups
+// at once, see group.h's mMinifigFamily). Called both for Alt+click (any piece, any time - a
+// power-user shortcut) and, from lc_view.cpp's plain-click path, specifically when the clicked
+// piece's group IS the family root (the Torso) - clicking the Torso is "grab the whole minifig",
+// clicking any other limb is a normal single-group click (see OnButtonDown).
 void lcModel::SelectMinifigFamilyAction(lcObject* Object)
 {
 	if (!Object || !Object->IsPiece())
@@ -5652,9 +5657,24 @@ void lcModel::ShowMinifigDialog()
 		static const char* AssemblyNames[] = { "Head", "Torso", "Right Arm", "Left Arm", "Right Leg", "Left Leg" };
 		lcGroup* AssemblyGroups[6] = {};
 
-		// The first assembly group created for this minifig becomes the shared family tag every
-		// other assembly group of the same minifig points at (see group.h's mMinifigFamily comment).
+		// No real mGroup parent between the 6 limb groups (siblings, like before) - that keeps a
+		// plain click isolating just one limb for posing, same as clicking any ordinary ungrouped
+		// piece. The Torso group is the minifig's "root": clicking IT selects the whole figure (see
+		// the plain-click special case in lc_view.cpp's OnButtonDown, keyed on
+		// Group->mMinifigFamily == Group). Every assembly group's mMinifigFamily points at Torso's
+		// group, established up front so it's available regardless of PartAssembly's iteration order
+		// (Head, index 0, comes before Torso, index 1, in the table above).
 		lcGroup* MinifigFamily = nullptr;
+
+		for (const auto& Entry : PartAssembly)
+		{
+			if (Entry.AssemblyIndex == 1 && Minifig.Parts[Entry.PartIndex] && !AssemblyGroups[1])
+			{
+				AssemblyGroups[1] = AddGroup(tr("Minifig %1 #").arg(QString::fromLatin1(AssemblyNames[1])), nullptr);
+				MinifigFamily = AssemblyGroups[1];
+				AssemblyGroups[1]->mMinifigFamily = MinifigFamily;
+			}
+		}
 
 		for (const auto& Entry : PartAssembly)
 		{
@@ -5667,6 +5687,8 @@ void lcModel::ShowMinifigDialog()
 			{
 				AssemblyGroup = AddGroup(tr("Minifig %1 #").arg(QString::fromLatin1(AssemblyNames[Entry.AssemblyIndex])), nullptr);
 
+				// No Torso on this minifig (unusual) - fall back to whichever group is created
+				// first as the family anchor, so mMinifigFamily is still always set.
 				if (!MinifigFamily)
 					MinifigFamily = AssemblyGroup;
 
